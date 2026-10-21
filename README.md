@@ -71,7 +71,7 @@ Read [architecture](docs/ARCHITECTURE.md), [security](docs/SECURITY.md), [Window
 
 Source is published at [andregabry/AiFlow](https://github.com/andregabry/AiFlow). The [validation workflow](https://github.com/andregabry/AiFlow/actions/workflows/validate.yml) checks and packages Windows and macOS. Completed successful runs expose unsigned installer artifacts on their run page; source publication alone does not certify either platform or the live account integrations.
 
-Local verification on 2026-10-21 covers 40 Rust, 14 TypeScript and 11 browser tests. New Claude/Gemini account logins, live provider-cloud task completion and macOS runtime behavior still require live validation.
+Local verification on 2026-10-21 covers 41 Rust, 14 TypeScript and 11 browser tests. New Claude/Gemini account logins, live provider-cloud task completion and macOS runtime behavior still require live validation.
 
 ## Execution environment at queue start
 

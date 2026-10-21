@@ -53,7 +53,7 @@ Recorded checks:
 - TypeScript typecheck, ESLint, Prettier and frontend production build passed.
 - 14 TypeScript unit tests passed.
 - 11 Playwright scenarios cover offline navigation/themes, project sheet keyboard behavior, connected-state/live IPC, GitHub's sequential connection modal, isolated provider login output/cancellation, inline errors plus unverifiable-account handling, and the build-without-OAuth fallback through official GitHub CLI, automatic internal-window commands and code display. Fixture data is **UI MOCK for tests only**, never shipped as real state.
-- 40 Rust tests cover state transitions, provider classification, quotas, redaction, process supervision, replay/recovery, Git probes/leases, queue validation, managed clone/push/remote-SHA verification, GitHub report gates and cloud tracking/check validation. See the latest execution evidence for final run results.
+- 41 Rust tests cover state transitions, provider classification, quotas, redaction, process supervision, replay/recovery, Git probes/leases, queue validation, managed clone/push/remote-SHA verification, GitHub report gates and cloud tracking/check validation. See the latest execution evidence for final run results.
 - Rust formatting and Clippy `--all-targets -- -D warnings` passed with no warnings.
 - npm audit reported 0 vulnerabilities. No failed test was converted into a skip.
 - Native Windows release built and opened successfully, showing Local backend connected, Codex CLI 0.163.0 detected, and Claude/Gemini NOT INSTALLED.
@@ -92,3 +92,5 @@ Verification includes a disposable local bare repository for clone/push/SHA conf
 ## Simplified queue start and tutorial
 
 Local Start queue now starts directly, with environment selection beside the action. Cloud configuration is reused after setup. A circled exclamation opens the Portuguese tutorial, connection/configuration shortcuts and latest execution reason. Missing local validation commands are detected from conventional project manifests after checkout preparation and saved once with an audit event; explicit policy commands remain unchanged. Unsupported test setups block before starting an agent. Explicit Start can retry setup failures while retaining manual approval gates. Browser fixtures cover direct start without preconfigured validation, tutorial access and cloud setup. The user's queued tasks were not executed during verification.
+
+Named npm test scripts are now detected when the package has no default test script (for example, test:parser). Watch, development, interactive and update scripts are excluded, along with unrelated maintenance commands. A regression fixture matches the affected repository manifest; explicitly configured validation commands remain unchanged.

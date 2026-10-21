@@ -134,13 +134,28 @@ pub fn detect_validation(path: &Path) -> Vec<Vec<String>> {
         .ok()
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
     if let Some(package) = package {
-        let test = package["scripts"]["test"].as_str().unwrap_or("").trim();
-        if !test.is_empty() && !test.contains("no test specified") {
-            let mut commands = vec![vec!["npm".into(), "test".into()]];
-            if package["scripts"]["build"]
+        let scripts = package["scripts"].as_object();
+        let usable = |value: &serde_json::Value| {
+            value
                 .as_str()
-                .is_some_and(|s| !s.trim().is_empty())
-            {
+                .is_some_and(|s| !s.trim().is_empty() && !s.contains("no test specified"))
+        };
+        let mut commands = vec![];
+        if scripts.and_then(|s| s.get("test")).is_some_and(usable) {
+            commands.push(vec!["npm".into(), "test".into()]);
+        } else if let Some(scripts) = scripts {
+            for (name, value) in scripts {
+                let modifiers = name.to_ascii_lowercase();
+                let excluded = modifiers
+                    .split(':')
+                    .any(|part| matches!(part, "watch" | "dev" | "update" | "interactive"));
+                if name.starts_with("test:") && !excluded && usable(value) {
+                    commands.push(vec!["npm".into(), "run".into(), name.clone()]);
+                }
+            }
+        }
+        if !commands.is_empty() {
+            if scripts.and_then(|s| s.get("build")).is_some_and(usable) {
                 commands.push(vec!["npm".into(), "run".into(), "build".into()]);
             }
             return commands;
@@ -336,6 +351,18 @@ mod tests {
         assert_eq!(
             detect_validation(temp.path()),
             vec![vec!["npm", "test"], vec!["npm", "run", "build"]]
+        );
+    }
+    #[test]
+    fn namespaced_npm_tests_are_detected_without_selecting_maintenance_or_watch_scripts() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("package.json"),r#"{"scripts":{"test:parser":"tsx --test tests/report-parser.test.ts","test:watch":"vitest --watch","test:update":"vitest -u","dev":"next dev","build":"next build","db:reset":"tsx scripts/db-reset.ts"}}"#).unwrap();
+        assert_eq!(
+            detect_validation(temp.path()),
+            vec![
+                vec!["npm", "run", "test:parser"],
+                vec!["npm", "run", "build"]
+            ]
         );
     }
     #[test]
