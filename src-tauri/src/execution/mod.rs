@@ -222,17 +222,6 @@ async fn step(app: Arc<AppState>, p: Project) -> Result<()> {
             ),
         );
     }
-    if p.policy.require_tests && p.policy.test_commands.is_empty() {
-        return transition(
-            &app,
-            &mut e,
-            "BLOCKED",
-            Some(
-                "Configure independent validation commands in the project policy before execution."
-                    .into(),
-            ),
-        );
-    }
     if attempt > p.policy.max_retries + 1 {
         return transition(
             &app,
@@ -251,6 +240,10 @@ async fn step(app: Arc<AppState>, p: Project) -> Result<()> {
                 Some(format!("Could not prepare managed checkout: {reason}")),
             )
         }
+    };
+    let p = match crate::workspace::configure_validation(&app, p) {
+        Ok(p) => p,
+        Err(reason) => return transition(&app, &mut e, "BLOCKED", Some(reason)),
     };
     let lease = match git::lock(&p.path).await {
         Ok(v) => v,

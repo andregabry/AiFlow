@@ -129,6 +129,52 @@ pub async fn prepare(app: &AppState, mut p: Project) -> Result<Project> {
     app.changed();
     Ok(p)
 }
+pub fn detect_validation(path: &Path) -> Vec<Vec<String>> {
+    let package = std::fs::read(path.join("package.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+    if let Some(package) = package {
+        let test = package["scripts"]["test"].as_str().unwrap_or("").trim();
+        if !test.is_empty() && !test.contains("no test specified") {
+            let mut commands = vec![vec!["npm".into(), "test".into()]];
+            if package["scripts"]["build"]
+                .as_str()
+                .is_some_and(|s| !s.trim().is_empty())
+            {
+                commands.push(vec!["npm".into(), "run".into(), "build".into()]);
+            }
+            return commands;
+        }
+    }
+    if path.join("Cargo.toml").is_file() {
+        return vec![vec!["cargo".into(), "test".into(), "--all-targets".into()]];
+    }
+    if path.join("go.mod").is_file() {
+        return vec![vec!["go".into(), "test".into(), "./...".into()]];
+    }
+    if path.join("pytest.ini").is_file()
+        || (path.join("pyproject.toml").is_file() && path.join("tests").is_dir())
+    {
+        return vec![vec!["python".into(), "-m".into(), "pytest".into()]];
+    }
+    vec![]
+}
+pub fn configure_validation(app: &AppState, mut p: Project) -> Result<Project> {
+    if p.policy.require_tests && p.policy.test_commands.is_empty() {
+        let commands = detect_validation(Path::new(&p.path));
+        if commands.is_empty() {
+            return Err("Validation setup: no supported test suite was detected. Click the (!) queue tutorial and choose Configure validation to set this repository's test commands".into());
+        }
+        p.policy.test_commands = commands;
+        app.store.save_project(&p)?;
+        app.store.audit(
+            "VALIDATION_AUTO_DETECTED",
+            serde_json::json!({"projectId":p.id,"commands":p.policy.test_commands}),
+        )?;
+        app.changed();
+    }
+    Ok(p)
+}
 pub async fn publish(app: &AppState, p: &Project, head: &str) -> Result<bool> {
     if !is_managed(app, p)? {
         return Ok(false);
@@ -241,6 +287,55 @@ mod tests {
                 .await
                 .unwrap()
                 .head
+        );
+    }
+    #[tokio::test]
+    async fn auto_validation_is_saved_once_and_never_replaces_explicit_commands() {
+        let (_temp, app, mut p) = crate::execution::tests::fixture(false, false).await;
+        std::fs::write(
+            Path::new(&p.path).join("package.json"),
+            r#"{"scripts":{"test":"node --test"}}"#,
+        )
+        .unwrap();
+        p.policy.test_commands.clear();
+        let detected = configure_validation(&app, p).unwrap();
+        assert_eq!(detected.policy.test_commands, vec![vec!["npm", "test"]]);
+        assert_eq!(
+            app.store
+                .project(&detected.id)
+                .unwrap()
+                .policy
+                .test_commands,
+            detected.policy.test_commands
+        );
+        let mut explicit = detected;
+        explicit.policy.test_commands = vec![vec!["custom-validator".into()]];
+        assert_eq!(
+            configure_validation(&app, explicit)
+                .unwrap()
+                .policy
+                .test_commands,
+            vec![vec!["custom-validator"]]
+        );
+    }
+    #[test]
+    fn validation_detection_requires_real_tests_and_preserves_configured_policy() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(detect_validation(temp.path()).is_empty());
+        std::fs::write(
+            temp.path().join("package.json"),
+            r#"{"scripts":{"test":"echo Error: no test specified && exit 1"}}"#,
+        )
+        .unwrap();
+        assert!(detect_validation(temp.path()).is_empty());
+        std::fs::write(
+            temp.path().join("package.json"),
+            r#"{"scripts":{"test":"node --test","build":"tsc"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            detect_validation(temp.path()),
+            vec![vec!["npm", "test"], vec!["npm", "run", "build"]]
         );
     }
     #[test]

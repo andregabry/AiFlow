@@ -4,6 +4,7 @@ import {
   Home,
   FolderGit2,
   CircleDot,
+  CircleAlert,
   Layers3,
   Activity,
   Cpu,
@@ -143,6 +144,8 @@ export default function App() {
   const [sidebar, setSidebar] = useState(false);
   const [repositorySearch, setRepositorySearch] = useState("");
   const [queueLaunch, setQueueLaunch] = useState(false);
+  const [queueHelp, setQueueHelp] = useState(false);
+  const [runMode, setRunMode] = useState<"local" | "cloud">("local");
   const syncedAccount = useRef<string | undefined>(undefined);
   const project = data.projects.find((p) => p.id === projectId);
   const issues =
@@ -238,7 +241,33 @@ export default function App() {
   };
   const control = (action: string) => {
     if (action === "start") {
-      setQueueLaunch(true);
+      if (runMode === "local") {
+        void useApp.getState().command("queue_control", {
+          projectId,
+          action,
+          runtime: {
+            mode: "local",
+            environmentId: "",
+            baseBranch: "",
+            requiredChecks: [],
+          },
+        });
+      } else {
+        void useApp
+          .getState()
+          .command<QueueRuntime>("queue_runtime", { projectId })
+          .then((runtime) => {
+            if (
+              runtime?.mode === "cloud" &&
+              runtime.environmentId &&
+              runtime.requiredChecks.length
+            ) {
+              void useApp
+                .getState()
+                .command("queue_control", { projectId, action, runtime });
+            } else setQueueLaunch(true);
+          });
+      }
       return;
     }
     void useApp.getState().command("queue_control", { projectId, action });
@@ -456,6 +485,26 @@ export default function App() {
                       >
                         <RefreshCw size={14} />
                         Sync issues
+                      </AiButton>
+                      <select
+                        aria-label="Queue execution environment"
+                        value={runMode}
+                        onChange={(e) => {
+                          const mode = e.target.value as "local" | "cloud";
+                          setRunMode(mode);
+                          if (mode === "cloud") setQueueLaunch(true);
+                        }}
+                      >
+                        <option value="local">This computer</option>
+                        <option value="cloud">Provider cloud</option>
+                      </select>
+                      <AiButton
+                        variant="ghost"
+                        aria-label="Queue tutorial"
+                        title="Como iniciar a fila"
+                        onClick={() => setQueueHelp(true)}
+                      >
+                        <CircleAlert size={19} />
                       </AiButton>
                       <AiButton
                         variant="primary"
@@ -751,18 +800,90 @@ export default function App() {
         onExecution={openExecution}
       />
       <AiSheet
+        open={queueHelp}
+        title="Como iniciar a fila"
+        onClose={() => setQueueHelp(false)}
+        modal
+      >
+        <div className="form-content">
+          <p>
+            Escolha onde executar e clique em <strong>Start queue</strong>. No
+            computador, o AiFlow prepara o repositório e identifica os testes
+            usuais automaticamente.
+          </p>
+          <ol>
+            <li>
+              <strong>Conecte as contas.</strong> Em Accounts, conecte GitHub e
+              a IA escolhida nas issues. A sessão do CLI oficial deve estar
+              autenticada.
+            </li>
+            <li>
+              <strong>Adicione as issues.</strong> Selecione um repositório em
+              Projects e adicione as issues abertas à fila. Esta fila tem{" "}
+              {queue.length} tarefa(s).
+            </li>
+            <li>
+              <strong>Escolha o ambiente.</strong> This computer usa um checkout
+              gerenciado pelo AiFlow. Provider cloud usa um ambiente Codex
+              configurado na sua conta; informe o ambiente e os checks apenas na
+              configuração inicial.
+            </li>
+            <li>
+              <strong>Inicie e acompanhe.</strong> Clique em Start queue e veja
+              o andamento em Executions. O app valida o resultado, publica o
+              relatório no GitHub e libera a próxima issue.
+            </li>
+          </ol>
+          <p>
+            <strong>Validação automática:</strong> reconhece testes npm, Cargo,
+            Go e pytest. Se o projeto usar outros comandos, configure-os uma vez
+            no botão abaixo. Testes ausentes ou com falha mantêm a fila parada
+            para revisão.
+          </p>
+          {executions[0]?.reason && (
+            <div className="execution-reason" role="status">
+              Último resultado: {executions[0].reason}
+            </div>
+          )}
+          <AiButton
+            onClick={() => {
+              setQueueHelp(false);
+              go("Accounts");
+            }}
+          >
+            Abrir conexões
+          </AiButton>
+          <AiButton
+            onClick={() => {
+              setQueueHelp(false);
+              setEditProject(project);
+              setProjectSheet(true);
+            }}
+          >
+            Configurar validação
+          </AiButton>
+          <AiButton
+            onClick={() => {
+              setQueueHelp(false);
+              setRunMode("cloud");
+              setQueueLaunch(true);
+            }}
+          >
+            Configurar nuvem
+          </AiButton>
+        </div>
+      </AiSheet>
+      <AiSheet
         open={queueLaunch}
-        title="Start queue"
+        title="Cloud setup"
         onClose={() => setQueueLaunch(false)}
       >
         {project && queueLaunch && (
           <QueueLaunchForm
             project={project}
-            onClose={() => setQueueLaunch(false)}
-            onSettings={() => {
+            onClose={(mode) => {
+              if (mode) setRunMode(mode);
               setQueueLaunch(false);
-              setEditProject(project);
-              setProjectSheet(true);
             }}
           />
         )}
@@ -1940,14 +2061,12 @@ interface QueueRuntime {
 function QueueLaunchForm({
   project,
   onClose,
-  onSettings,
 }: {
   project: Project;
-  onClose: () => void;
-  onSettings: () => void;
+  onClose: (mode?: QueueRuntime["mode"]) => void;
 }) {
   const [runtime, setRuntime] = useState<QueueRuntime>({
-    mode: "local",
+    mode: "cloud",
     environmentId: "",
     baseBranch: project.branch,
     requiredChecks: [],
@@ -1964,6 +2083,7 @@ function QueueLaunchForm({
         if (value) {
           setRuntime({
             ...value,
+            mode: "cloud",
             baseBranch: value.baseBranch || project.branch,
           });
           setChecks(value.requiredChecks.join("\n"));
@@ -1972,10 +2092,6 @@ function QueueLaunchForm({
       });
   }, [project.id, project.branch]);
   const cloud = runtime.mode === "cloud";
-  const missingTests =
-    !cloud &&
-    project.policy.requireTests &&
-    !project.policy.testCommands.length;
   async function start() {
     await useApp.getState().command("queue_control", {
       projectId: project.id,
@@ -1992,7 +2108,7 @@ function QueueLaunchForm({
         ],
       },
     });
-    if (!useApp.getState().error) onClose();
+    if (!useApp.getState().error) onClose(runtime.mode);
   }
   return (
     <div className="form-content">
@@ -2074,15 +2190,6 @@ function QueueLaunchForm({
               ? "The agent runs in the linked local worktree. AiFlow publishes the validation report to the GitHub issue."
               : "AiFlow clones the repository into its own workspace, runs the official CLI, independently validates the changes and publishes commits to a work/aiflow branch. Your existing folders are not required."}
           </p>
-          {missingTests && (
-            <div role="alert">
-              <p>
-                Configure independent validation commands in repository settings
-                before starting local execution.
-              </p>
-              <AiButton onClick={onSettings}>Configure validation</AiButton>
-            </div>
-          )}
         </>
       )}
       <AiButton
@@ -2090,7 +2197,6 @@ function QueueLaunchForm({
         disabled={
           !ready ||
           loading ||
-          missingTests ||
           (cloud &&
             (!runtime.environmentId.trim() ||
               !runtime.baseBranch.trim() ||
@@ -2224,7 +2330,7 @@ function ProjectForm({
           <input
             value={form.path}
             onChange={(e) => setForm({ ...form, path: e.target.value })}
-            placeholder="Optional � AiFlow can prepare a managed checkout"
+            placeholder="Optional — AiFlow can prepare a managed checkout"
           />
           <AiButton onClick={() => void choose()}>Choose…</AiButton>
         </div>

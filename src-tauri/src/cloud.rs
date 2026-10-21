@@ -75,9 +75,24 @@ pub fn configure(app: &AppState, p: &Project, config: &QueueRuntime) -> Result<(
             .get("codex")?
             .detect()
             .ok_or("Install and connect the official Codex CLI first")?;
-    } else if p.policy.require_tests && p.policy.test_commands.is_empty() {
-        return Err("Configure independent validation commands in repository settings before starting local execution".into());
+    } else {
+        let executions = app.store.executions()?;
+        for item in app
+            .store
+            .queue()?
+            .iter()
+            .filter(|item| item.project_id == p.id && item.state == "BLOCKED")
+        {
+            let Some(e) = executions.iter().find(|e| e.item_id == item.id) else {
+                continue;
+            };
+            let setup = e.reason.as_deref().unwrap_or("");
+            if setup.starts_with("Validation setup:") || setup.starts_with("Could not prepare managed checkout:") || setup=="Configure independent validation commands in the project policy before execution." {
+                app.store.sql("UPDATE queue_items SET state='QUEUED' WHERE id=? AND state='BLOCKED'",[&e.item_id])?;
+            }
+        }
     }
+
     app.store.sql(
         "INSERT OR REPLACE INTO queue_runtimes VALUES(?,?)",
         rusqlite::params![
@@ -506,6 +521,43 @@ mod tests {
             !std::path::Path::new(&app.store.workspace_root().unwrap()).exists(),
             "Cloud tracking must not clone the repository locally"
         );
+    }
+    #[tokio::test]
+    async fn local_start_allows_automatic_validation_setup_and_retains_manual_gates() {
+        let (_temp, app, mut p) = crate::execution::tests::fixture(false, false).await;
+        app.active.lock().unwrap().clear();
+        p.policy.test_commands.clear();
+        let config = QueueRuntime {
+            mode: "local".into(),
+            ..Default::default()
+        };
+        configure(&app, &p, &config).unwrap();
+        for (item, reason) in [
+            ("q1", "Validation setup: no test suite"),
+            ("q2", "Manual approval required by project policy"),
+        ] {
+            app.store
+                .save_execution(&Execution {
+                    id: format!("blocked-{item}"),
+                    item_id: item.into(),
+                    project_id: p.id.clone(),
+                    provider_id: "fake".into(),
+                    state: "BLOCKED".into(),
+                    started_at: now(),
+                    finished_at: Some(now()),
+                    reason: Some(reason.into()),
+                    before_git: None,
+                    after_git: None,
+                    retry_at: None,
+                    attempt: 1,
+                    session_id: None,
+                })
+                .unwrap();
+        }
+        configure(&app, &p, &config).unwrap();
+        let queue = app.store.queue().unwrap();
+        assert_eq!(queue[0].state, "QUEUED");
+        assert_eq!(queue[1].state, "BLOCKED");
     }
     #[test]
     fn cloud_config_requires_environment_and_independent_named_checks() {

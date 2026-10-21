@@ -198,9 +198,9 @@ test("Projects lists GitHub repositories and selecting one loads its issues with
   await expect(
     page.getByLabel("GitHub repository", { exact: false }).first(),
   ).toHaveValue("sample/tools");
-  await page
-    .getByLabel("Independent validation commands", { exact: false })
-    .fill('[["git","status"]]');
+  await expect(
+    page.getByLabel("Independent validation commands", { exact: false }),
+  ).toHaveValue("[]");
   await page.getByRole("button", { name: "Save project", exact: true }).click();
   await expect(detail).toBeVisible();
   await expect(
@@ -222,20 +222,25 @@ test("Projects lists GitHub repositories and selecting one loads its issues with
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Start queue", exact: true }).click();
-  const launch = page.getByRole("dialog", { name: "Start queue", exact: true });
-  await expect(launch.getByLabel("Execution environment")).toHaveValue("local");
-  await expect(launch).toContainText(
-    "AiFlow clones the repository into its own workspace",
+  await expect(
+    page.getByRole("dialog", { name: "Start queue", exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Queue tutorial", exact: true })
+    .click();
+  const help = page.getByRole("dialog", { name: "Como iniciar a fila" });
+  await expect(help).toContainText(
+    "identifica os testes usuais automaticamente",
   );
   await expect(
-    launch.getByRole("button", { name: "Start local queue", exact: true }),
-  ).toBeEnabled();
-  await launch
-    .getByRole("button", { name: "Start local queue", exact: true })
-    .click();
-  await expect(launch).toHaveCount(0);
-  await page.getByRole("button", { name: "Start queue", exact: true }).click();
-  await launch.getByLabel("Execution environment").selectOption("cloud");
+    help.getByRole("button", { name: "Configurar validação", exact: true }),
+  ).toBeVisible();
+  await expect(help).toHaveCSS("opacity", "1");
+  await expect(help.locator("..")).toHaveCSS("opacity", "1");
+  await page.screenshot({ path: "test-results/queue-tutorial.png" });
+  await page.keyboard.press("Escape");
+  await page.getByLabel("Queue execution environment").selectOption("cloud");
+  const launch = page.getByRole("dialog", { name: "Cloud setup", exact: true });
   await expect(
     launch.getByRole("button", { name: "Start cloud queue", exact: true }),
   ).toBeDisabled();

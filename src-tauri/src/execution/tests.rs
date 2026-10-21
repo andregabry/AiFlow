@@ -329,3 +329,15 @@ async fn successful_validation_reports_then_closes_github_before_success() {
     assert_eq!(app.store.queue().unwrap()[0].state, "SUCCESS");
     assert_eq!(app.store.queue().unwrap()[1].state, "QUEUED");
 }
+
+#[tokio::test]
+async fn unknown_validation_suite_blocks_before_agent_and_does_not_advance() {
+    let (_temp, app, mut p) = fixture(false, false).await;
+    p.policy.test_commands.clear();
+    step(app.clone(), p.clone()).await.unwrap();
+    let e = app.store.executions().unwrap()[0].clone();
+    assert_eq!(e.state, "BLOCKED");
+    assert!(e.reason.unwrap().starts_with("Validation setup:"));
+    assert!(!std::path::Path::new(&p.path).join("changes.txt").exists());
+    assert_eq!(app.store.queue().unwrap()[1].state, "QUEUED");
+}

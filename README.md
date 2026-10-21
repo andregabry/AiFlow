@@ -71,12 +71,14 @@ Read [architecture](docs/ARCHITECTURE.md), [security](docs/SECURITY.md), [Window
 
 Source is published at [andregabry/AiFlow](https://github.com/andregabry/AiFlow). The [validation workflow](https://github.com/andregabry/AiFlow/actions/workflows/validate.yml) checks and packages Windows and macOS. Completed successful runs expose unsigned installer artifacts on their run page; source publication alone does not certify either platform or the live account integrations.
 
-Local verification on 2026-10-21 covers 36 Rust, 14 TypeScript and 11 browser tests. New Claude/Gemini account logins, live provider-cloud task completion and macOS runtime behavior still require live validation.
+Local verification on 2026-10-21 covers 40 Rust, 14 TypeScript and 11 browser tests. New Claude/Gemini account logins, live provider-cloud task completion and macOS runtime behavior still require live validation.
 
 ## Execution environment at queue start
 
-Adding a GitHub issue to the queue requires no local folder. **Start queue** asks for **This computer** or **Provider cloud** each time. Local mode can clone into an AiFlow-managed workspace, run independent validation commands and publish the validated commit to an isolated `work/aiflow-*` branch. Existing user-linked worktrees retain local-only Git publication. A confirmed validation report on the source GitHub issue is required before releasing the next task. Closing issues remains an explicit project policy.
+Adding a GitHub issue to the queue requires no local folder. Choose **This computer** or **Provider cloud** beside **Start queue**. Local execution starts directly; cloud setup is requested only when its saved configuration is missing. Local mode can clone into an AiFlow-managed workspace, run independent validation commands and publish the validated commit to an isolated `work/aiflow-*` branch. Existing user-linked worktrees retain local-only Git publication. A confirmed validation report on the source GitHub issue is required before releasing the next task. Closing issues remains an explicit project policy.
 
 Provider cloud currently supports the official Codex CLI. Supply the repository's cloud environment ID, published base branch and exact required GitHub check names. The controller waits for the expected branch, pull request and successful checks on the exact published commit. If Codex leaves only a diff, publish it from the provider task before the gate can pass. Cloud completion text alone does not release the next issue. Claude/Gemini cloud adapters are not implemented. Provider plan eligibility and usage limits apply; no local sign-in credentials are copied into a runner.
 
 Cloud references survive restart and resume tracking without resubmission. Stopping tracking does not cancel remote compute. AiFlow must be open to validate and dispatch subsequent tasks. The cloud CLI was probed read-only; no live cloud model task was launched during verification.
+
+The circled exclamation button beside Start queue opens a practical setup tutorial. Local execution detects declared npm tests/build, Cargo tests, Go tests or pytest automatically when no validation commands are configured. Explicit commands are preserved. Unknown test suites stop before the agent starts and point to the tutorial; tests are never silently disabled.
