@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import type { QueueItem } from "../../src/core/types";
 
 test("Projects lists GitHub repositories and selecting one loads its issues without a local folder", async ({
   page,
@@ -59,6 +60,7 @@ test("Projects lists GitHub repositories and selecting one loads its issues with
       comments: [],
     });
     const issues = new Map<string, ReturnType<typeof issue>[]>();
+    const queue: QueueItem[] = [];
     w.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
       unregisterListener: () => undefined,
     };
@@ -75,7 +77,7 @@ test("Projects lists GitHub repositories and selecting one loads its issues with
               projectId,
               issues,
             })),
-            queue: [],
+            queue,
             executions: [],
             providers: [],
             usage: [],
@@ -99,6 +101,29 @@ test("Projects lists GitHub repositories and selecting one loads its issues with
               : [issue(101, "Library issue")],
           );
           return issues.get(id)?.length;
+        }
+        if (command === "save_project") {
+          const project = args.project as (typeof repos)[number];
+          projects = projects.map((p) => (p.id === project.id ? project : p));
+          return project;
+        }
+        if (command === "dry_run") {
+          return {
+            prompt: "Preview only: agent has not run",
+            validationCommands: [],
+          };
+        }
+        if (command === "enqueue") {
+          queue.push({
+            id: "queued-issue",
+            projectId: String(args.projectId),
+            issueNumber: Number(args.number),
+            providerId: "codex",
+            position: 1,
+            state: "QUEUED",
+            approved: false,
+          });
+          return;
         }
         throw new Error(`Unexpected repository IPC: ${command}`);
       },
@@ -144,8 +169,14 @@ test("Projects lists GitHub repositories and selecting one loads its issues with
   await expect(
     page.getByRole("button", { name: "Add to queue", exact: true }),
   ).toBeDisabled();
-  await page.keyboard.press("Escape");
-  await page
+  const detail = page.getByRole("dialog", { name: "Issue #201" });
+  await expect(
+    detail.getByRole("button", { name: "Dry run", exact: true }),
+  ).toBeDisabled();
+  await expect(detail.getByRole("status")).toContainText(
+    "Link a local Git folder",
+  );
+  await detail
     .getByRole("button", { name: "Link local folder", exact: true })
     .click();
   await expect(
@@ -154,6 +185,26 @@ test("Projects lists GitHub repositories and selecting one loads its issues with
   await expect(
     page.getByLabel("GitHub repository", { exact: false }).first(),
   ).toHaveValue("sample/tools");
+  await page.getByLabel("Worktree root").fill("C:/work/sample-tools");
+  await page.getByRole("button", { name: "Save project", exact: true }).click();
+  await expect(detail).toBeVisible();
+  await expect(
+    detail.getByRole("button", { name: "Add to queue", exact: true }),
+  ).toBeEnabled();
+  await detail.getByRole("button", { name: "Dry run", exact: true }).click();
+  await expect(detail.locator(".dry-run")).toContainText(
+    "Preview only: agent has not run",
+  );
+  await expect(detail.getByText("Not queued", { exact: true })).toBeVisible();
+  await detail
+    .getByRole("button", { name: "Add to queue", exact: true })
+    .click();
+  await expect(
+    detail.getByRole("button", { name: "Add to queue", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    detail.getByRole("button", { name: "Retry", exact: true }),
+  ).toBeVisible();
   await page.keyboard.press("Escape");
   await page.screenshot({ path: "test-results/github-repository-issues.png" });
 });

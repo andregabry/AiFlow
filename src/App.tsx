@@ -728,7 +728,7 @@ export default function App() {
         </footer>
       </div>
       <IssueDetail
-        issue={selected}
+        issue={projectSheet ? null : selected}
         project={project}
         item={queue.find((q) => q.issueNumber === selected?.number)}
         execution={executions.find(
@@ -737,6 +737,10 @@ export default function App() {
             queue.find((q) => q.issueNumber === selected?.number)?.id,
         )}
         onClose={closeIssue}
+        onLinkFolder={() => {
+          setEditProject(project);
+          setProjectSheet(true);
+        }}
         onExecution={openExecution}
       />
       <AiSheet
@@ -2144,6 +2148,7 @@ function IssueDetail({
   execution,
   onClose,
   onExecution,
+  onLinkFolder,
 }: {
   issue: Issue | null;
   project?: Project;
@@ -2151,6 +2156,7 @@ function IssueDetail({
   execution?: Execution;
   onClose: () => void;
   onExecution: (e?: Execution) => void;
+  onLinkFolder: () => void;
 }) {
   const [tab, setTab] = useState<"Overview" | "Execution" | "Git" | "History">(
     "Overview",
@@ -2268,6 +2274,29 @@ function IssueDetail({
               {execution?.reason && (
                 <div className="execution-reason">{execution.reason}</div>
               )}
+              <p className="muted">
+                Add to queue schedules this issue for execution when you start
+                the queue. Dry run checks Git and the provider and previews the
+                prompt and validation plan without running the agent.
+              </p>
+              {!project?.path && (
+                <div className="execution-reason" role="status">
+                  <p>
+                    Link a local Git folder for this repository to enable Add to
+                    queue and Dry run. Your tasks will run in that folder.
+                  </p>
+                  <AiButton onClick={onLinkFolder}>
+                    <FolderGit2 size={14} />
+                    Link local folder
+                  </AiButton>
+                </div>
+              )}
+              {issue.state === "CLOSED" && !item && (
+                <p className="muted">
+                  This issue is closed on GitHub. Reopen it to add it to the
+                  queue.
+                </p>
+              )}
               <div className="detail-actions">
                 {!item ? (
                   <AiButton
@@ -2309,6 +2338,8 @@ function IssueDetail({
                   </>
                 )}
                 <AiButton
+                  disabled={loading || !project?.path}
+                  title="Check Git, provider health and the execution plan without running the agent"
                   onClick={() =>
                     void command("dry_run", {
                       projectId: project?.id,
