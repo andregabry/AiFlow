@@ -66,3 +66,9 @@ AiFlow itself is intended to be free. Official provider clients may require the 
 The local database and output archive are under Tauri's application data directory for `app.aiflow.desktop`. Keep the SQLite database, WAL files and archive folder together when backing up a stopped app.
 
 Read [architecture](docs/ARCHITECTURE.md), [security](docs/SECURITY.md), [Windows builds](docs/BUILD_WINDOWS.md) and [macOS builds](docs/BUILD_MACOS.md).
+
+## Source and build artifacts
+
+Source is published at [andregabry/AiFlow](https://github.com/andregabry/AiFlow). The [validation workflow](https://github.com/andregabry/AiFlow/actions/workflows/validate.yml) checks and packages Windows and macOS. Completed successful runs expose unsigned installer artifacts on their run page; source publication alone does not certify either platform or the live account integrations.
+
+Local verification on 2026-10-21 passed 25 Rust, 14 TypeScript and 10 browser tests, plus lint, formatting, Clippy and the Windows installer build. New Claude/Gemini account logins and macOS runtime behavior still require live validation.
