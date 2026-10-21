@@ -90,6 +90,7 @@ const navigation = [
 ];
 function external(url: string) {
   if (
+    !/^https:\/\/chatgpt\.com\/codex\/tasks\/task_[A-Za-z0-9_-]+$/.test(url) &&
     !/^https:\/\/(?:github\.com|developers\.openai\.com|code\.claude\.com|geminicli\.com)(?:\/|$)/.test(
       url,
     )
@@ -141,6 +142,7 @@ export default function App() {
   );
   const [sidebar, setSidebar] = useState(false);
   const [repositorySearch, setRepositorySearch] = useState("");
+  const [queueLaunch, setQueueLaunch] = useState(false);
   const syncedAccount = useRef<string | undefined>(undefined);
   const project = data.projects.find((p) => p.id === projectId);
   const issues =
@@ -234,8 +236,13 @@ export default function App() {
     setPage(name);
     setSidebar(false);
   };
-  const control = (action: string) =>
+  const control = (action: string) => {
+    if (action === "start") {
+      setQueueLaunch(true);
+      return;
+    }
     void useApp.getState().command("queue_control", { projectId, action });
+  };
   const addProject = () => go("Projects");
   const openExecution = (e?: Execution) => {
     if (e) setSelectedExecutionId(e.id);
@@ -452,7 +459,7 @@ export default function App() {
                       </AiButton>
                       <AiButton
                         variant="primary"
-                        disabled={loading || !queue.length || !project.path}
+                        disabled={loading || !queue.length}
                         onClick={() => control("start")}
                       >
                         <Play size={13} />
@@ -743,6 +750,23 @@ export default function App() {
         }}
         onExecution={openExecution}
       />
+      <AiSheet
+        open={queueLaunch}
+        title="Start queue"
+        onClose={() => setQueueLaunch(false)}
+      >
+        {project && queueLaunch && (
+          <QueueLaunchForm
+            project={project}
+            onClose={() => setQueueLaunch(false)}
+            onSettings={() => {
+              setQueueLaunch(false);
+              setEditProject(project);
+              setProjectSheet(true);
+            }}
+          />
+        )}
+      </AiSheet>
       <AiSheet
         open={projectSheet}
         title={editProject ? "Project settings" : "New project"}
@@ -1568,7 +1592,10 @@ function ExecutionPage({
             <AiProviderBadge id={execution.providerId} />
             <span>
               <GitBranch size={12} />
-              {execution.beforeGit?.branch ?? "Preparing worktree"}
+              {execution.beforeGit?.branch ??
+                (execution.sessionId?.startsWith("task_")
+                  ? "Provider cloud"
+                  : "Preparing worktree")}
             </span>
             {execution.afterGit?.head && (
               <code>{execution.afterGit.head.slice(0, 8)}</code>
@@ -1577,6 +1604,17 @@ function ExecutionPage({
         </div>
         <ExecutionTime execution={execution} />
       </div>
+      {execution.sessionId?.startsWith("task_") && (
+        <AiButton
+          onClick={() =>
+            external(
+              `https://chatgpt.com/codex/tasks/${encodeURIComponent(execution.sessionId ?? "")}`,
+            )
+          }
+        >
+          Open provider cloud task <ArrowUpRight size={14} />
+        </AiButton>
+      )}
       {execution.reason && (
         <div className="execution-reason">
           <ShieldCheck size={17} />
@@ -1893,6 +1931,180 @@ function AccountsPage() {
   );
 }
 
+interface QueueRuntime {
+  mode: "local" | "cloud";
+  environmentId: string;
+  baseBranch: string;
+  requiredChecks: string[];
+}
+function QueueLaunchForm({
+  project,
+  onClose,
+  onSettings,
+}: {
+  project: Project;
+  onClose: () => void;
+  onSettings: () => void;
+}) {
+  const [runtime, setRuntime] = useState<QueueRuntime>({
+    mode: "local",
+    environmentId: "",
+    baseBranch: project.branch,
+    requiredChecks: [],
+  });
+  const [checks, setChecks] = useState("");
+  const [ready, setReady] = useState(false);
+  const loading = useApp((s) => s.loading);
+  const error = useApp((s) => s.error);
+  useEffect(() => {
+    void useApp
+      .getState()
+      .command<QueueRuntime>("queue_runtime", { projectId: project.id })
+      .then((value) => {
+        if (value) {
+          setRuntime({
+            ...value,
+            baseBranch: value.baseBranch || project.branch,
+          });
+          setChecks(value.requiredChecks.join("\n"));
+          setReady(true);
+        }
+      });
+  }, [project.id, project.branch]);
+  const cloud = runtime.mode === "cloud";
+  const missingTests =
+    !cloud &&
+    project.policy.requireTests &&
+    !project.policy.testCommands.length;
+  async function start() {
+    await useApp.getState().command("queue_control", {
+      projectId: project.id,
+      action: "start",
+      runtime: {
+        ...runtime,
+        requiredChecks: [
+          ...new Set(
+            checks
+              .split("\n")
+              .map((s) => s.trim())
+              .filter(Boolean),
+          ),
+        ],
+      },
+    });
+    if (!useApp.getState().error) onClose();
+  }
+  return (
+    <div className="form-content">
+      <p>
+        Issues are read from GitHub. AiFlow validates each result, updates the
+        issue there and then releases the next queued task.
+      </p>
+      {error && (
+        <div className="execution-reason" role="alert">
+          {error}
+        </div>
+      )}
+      <label className="field">
+        Execution environment
+        <select
+          value={runtime.mode}
+          onChange={(e) =>
+            setRuntime({
+              ...runtime,
+              mode: e.target.value as QueueRuntime["mode"],
+            })
+          }
+        >
+          <option value="local">This computer</option>
+          <option value="cloud">Provider cloud</option>
+        </select>
+      </label>
+      {cloud ? (
+        <>
+          <p className="muted">
+            Codex cloud uses your signed-in account and an environment
+            configured for this repository. Your provider plan and usage limits
+            apply. Claude and Gemini cloud dispatch are not yet supported by
+            this integration.
+          </p>
+          <label className="field">
+            Codex cloud environment ID
+            <input
+              value={runtime.environmentId}
+              onChange={(e) =>
+                setRuntime({ ...runtime, environmentId: e.target.value })
+              }
+              placeholder="Environment ID from Codex cloud"
+            />
+          </label>
+          <label className="field">
+            Published base branch
+            <input
+              value={runtime.baseBranch}
+              onChange={(e) =>
+                setRuntime({ ...runtime, baseBranch: e.target.value })
+              }
+            />
+          </label>
+          <label className="field">
+            Required GitHub check names
+            <textarea
+              rows={4}
+              value={checks}
+              onChange={(e) => setChecks(e.target.value)}
+              placeholder={"tests\nbuild"}
+            />
+            <small>
+              One exact check name per line. The cloud task must publish its
+              branch and pull request. The queue waits for these checks to pass
+              on the exact commit; a provider completion message is
+              insufficient.
+            </small>
+          </label>
+          <p className="muted">
+            The cloud task continues on the provider if this app closes. Keep
+            AiFlow open to validate results and dispatch the next issue.
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="muted">
+            {project.path
+              ? "The agent runs in the linked local worktree. AiFlow publishes the validation report to the GitHub issue."
+              : "AiFlow clones the repository into its own workspace, runs the official CLI, independently validates the changes and publishes commits to a work/aiflow branch. Your existing folders are not required."}
+          </p>
+          {missingTests && (
+            <div role="alert">
+              <p>
+                Configure independent validation commands in repository settings
+                before starting local execution.
+              </p>
+              <AiButton onClick={onSettings}>Configure validation</AiButton>
+            </div>
+          )}
+        </>
+      )}
+      <AiButton
+        variant="primary"
+        disabled={
+          !ready ||
+          loading ||
+          missingTests ||
+          (cloud &&
+            (!runtime.environmentId.trim() ||
+              !runtime.baseBranch.trim() ||
+              !checks.trim()))
+        }
+        onClick={() => void start()}
+      >
+        <Play size={14} />
+        Start {cloud ? "cloud" : "local"} queue
+      </AiButton>
+    </div>
+  );
+}
+
 function ProjectForm({
   project,
   onClose,
@@ -1967,8 +2179,9 @@ function ProjectForm({
   return (
     <div className="form-content">
       <p className="muted">
-        Repository and issues come from GitHub. Link an existing local worktree
-        only when you want to run tasks. AiFlow inspects Git before saving.
+        Tasks and results stay on GitHub. Configure independent validation here.
+        A local folder is optional: AiFlow can prepare its own checkout when you
+        choose local execution, or dispatch to your provider cloud environment.
       </p>
       <label className="field">
         Project name
@@ -2011,7 +2224,7 @@ function ProjectForm({
           <input
             value={form.path}
             onChange={(e) => setForm({ ...form, path: e.target.value })}
-            placeholder="Select an existing Git worktree"
+            placeholder="Optional � AiFlow can prepare a managed checkout"
           />
           <AiButton onClick={() => void choose()}>Choose…</AiButton>
         </div>
@@ -2085,7 +2298,7 @@ function ProjectForm({
           { key: "requireTests" as const, label: "Require independent tests" },
           {
             key: "requireCI" as const,
-            label: "Require GitHub CI (no automatic push)",
+            label: "Require GitHub CI on the published commit",
           },
           {
             key: "closeIssue" as const,
@@ -2132,7 +2345,7 @@ function ProjectForm({
       </div>
       <AiButton
         variant="primary"
-        disabled={loading || !form.name || !form.repository || !form.path}
+        disabled={loading || !form.name || !form.repository}
         onClick={() => void save()}
       >
         {loading ? "Validating worktree…" : "Save project"}
@@ -2275,19 +2488,23 @@ function IssueDetail({
                 <div className="execution-reason">{execution.reason}</div>
               )}
               <p className="muted">
-                Add to queue schedules this issue for execution when you start
-                the queue. Dry run checks Git and the provider and previews the
-                prompt and validation plan without running the agent.
+                Add to queue schedules this GitHub issue. When you start the
+                queue, choose this computer or the provider cloud. AiFlow
+                validates the result and publishes its report to this issue
+                before releasing the next task. Dry run previews the setup
+                without starting the agent.
               </p>
               {!project?.path && (
                 <div className="execution-reason" role="status">
                   <p>
-                    Link a local Git folder for this repository to enable Add to
-                    queue and Dry run. Your tasks will run in that folder.
+                    No local folder is required to add this issue. For local
+                    execution, AiFlow prepares a managed checkout and publishes
+                    validated commits to a work branch. Cloud execution uses
+                    your provider environment and independent GitHub checks.
                   </p>
                   <AiButton onClick={onLinkFolder}>
-                    <FolderGit2 size={14} />
-                    Link local folder
+                    <Settings2 size={14} />
+                    Execution settings
                   </AiButton>
                 </div>
               )}
@@ -2302,13 +2519,9 @@ function IssueDetail({
                   <AiButton
                     variant="primary"
                     title={
-                      !project?.path
-                        ? "Link a local folder in repository settings to run tasks"
-                        : undefined
+                      "Schedule this GitHub issue; choose Local or Cloud when starting the queue"
                     }
-                    disabled={
-                      loading || issue.state === "CLOSED" || !project?.path
-                    }
+                    disabled={loading || issue.state === "CLOSED"}
                     onClick={() =>
                       void command("enqueue", {
                         projectId: project?.id,
@@ -2338,8 +2551,8 @@ function IssueDetail({
                   </>
                 )}
                 <AiButton
-                  disabled={loading || !project?.path}
-                  title="Check Git, provider health and the execution plan without running the agent"
+                  disabled={loading}
+                  title="Preview workspace, provider health and validation requirements without starting the agent"
                   onClick={() =>
                     void command("dry_run", {
                       projectId: project?.id,

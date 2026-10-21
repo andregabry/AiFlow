@@ -17,17 +17,17 @@ Requires Node.js, Git, Rust stable with the platform toolchain, and the [Tauri p
 
 1. Open **Accounts → Connect GitHub**. AiFlow verifies and reuses your existing official GitHub CLI account first. If sign-in is needed, it launches `gh auth login`, displays the real code without a terminal and opens the GitHub authorization window. No AiFlow OAuth App, developer account or manual token is required. All GitHub operations use `gh api`; credentials stay with GitHub CLI.
 2. Install any desired official provider CLI separately. AiFlow does not install providers. Existing official CLI authentication can be reused. **Providers → Scan** probes installed versions and capabilities.
-3. **Projects** automatically lists the repositories accessible to your connected GitHub account. Select one to load its open and closed **Issues**, without creating a local project or linking a folder. Use Sync repositories / Sync issues to refresh. Before running tasks, use **Link local folder** to associate an existing Git worktree and configure its provider/policy. Detached HEAD and subdirectory selections are rejected.
+3. **Projects** automatically lists repositories accessible to your GitHub account. Select one to load its open and closed **Issues**. A local folder is optional; configure execution policy in repository settings. AiFlow can prepare a managed checkout automatically, or use an existing linked worktree. Detached HEAD and subdirectory selections are rejected.
 4. Configure independent validation as argument arrays, e.g. `[["npm","test"],["npm","run","build"]]`. These are trusted project configuration; issues cannot define commands or policy.
-5. Sync issues. Open an issue, select its provider and **Add to queue**. **Dry run** checks Git, probes the provider and shows the prompt without launching an agent or modifying GitHub.
-6. Start the queue. Follow stdout/stderr and validation in **Execution Center**. Completed means the backend validator passed, not merely that the CLI said “done”.
+5. Sync issues. Open an issue, select its provider and **Add to queue**. **Dry run** previews setup and provider health, inspecting Git when a folder is already linked, without launching an agent or modifying GitHub.
+6. Start the queue and choose the execution environment. Follow execution and validation in **Execution Center**. Completed requires validation and a confirmed GitHub issue report.
 
 ## Default safety policy
 
 - No automatic provider failover; **Auto** resolves to the project's concrete default.
 - Only one execution per canonical worktree; OS file leases plus persistent lock records.
 - Clean tree, unchanged branch, a new descendant commit and independent tests required.
-- GitHub state is local-only by default. Closing issues must be explicitly enabled per project.
+- Validation reports are published to GitHub before releasing the next issue. Closing issues must be explicitly enabled per project.
 - `production`, `deployment` and `manual-approval` labels block until reviewed and approved.
 - Pause stops future scheduling. Cancellation stops the process tree and preserves partial work.
 - After a crash, interrupted attempts require review. Waiting quota attempts retain their retry time; start the paused queue to continue.
@@ -71,4 +71,12 @@ Read [architecture](docs/ARCHITECTURE.md), [security](docs/SECURITY.md), [Window
 
 Source is published at [andregabry/AiFlow](https://github.com/andregabry/AiFlow). The [validation workflow](https://github.com/andregabry/AiFlow/actions/workflows/validate.yml) checks and packages Windows and macOS. Completed successful runs expose unsigned installer artifacts on their run page; source publication alone does not certify either platform or the live account integrations.
 
-Local verification on 2026-10-21 passed 27 Rust, 14 TypeScript and 11 browser tests, plus lint, formatting, Clippy and the Windows installer build. New Claude/Gemini account logins and macOS runtime behavior still require live validation.
+Local verification on 2026-10-21 covers 36 Rust, 14 TypeScript and 11 browser tests. New Claude/Gemini account logins, live provider-cloud task completion and macOS runtime behavior still require live validation.
+
+## Execution environment at queue start
+
+Adding a GitHub issue to the queue requires no local folder. **Start queue** asks for **This computer** or **Provider cloud** each time. Local mode can clone into an AiFlow-managed workspace, run independent validation commands and publish the validated commit to an isolated `work/aiflow-*` branch. Existing user-linked worktrees retain local-only Git publication. A confirmed validation report on the source GitHub issue is required before releasing the next task. Closing issues remains an explicit project policy.
+
+Provider cloud currently supports the official Codex CLI. Supply the repository's cloud environment ID, published base branch and exact required GitHub check names. The controller waits for the expected branch, pull request and successful checks on the exact published commit. If Codex leaves only a diff, publish it from the provider task before the gate can pass. Cloud completion text alone does not release the next issue. Claude/Gemini cloud adapters are not implemented. Provider plan eligibility and usage limits apply; no local sign-in credentials are copied into a runner.
+
+Cloud references survive restart and resume tracking without resubmission. Stopping tracking does not cancel remote compute. AiFlow must be open to validate and dispatch subsequent tasks. The cloud CLI was probed read-only; no live cloud model task was launched during verification.

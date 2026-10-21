@@ -103,7 +103,10 @@ impl AIExecutionProvider for FakeProvider {
         }
     }
 }
-async fn fixture(first_limit: bool, fail: bool) -> (tempfile::TempDir, Arc<AppState>, Project) {
+pub(crate) async fn fixture(
+    first_limit: bool,
+    fail: bool,
+) -> (tempfile::TempDir, Arc<AppState>, Project) {
     let temp = tempfile::tempdir().unwrap();
     let work = temp.path().join("repo");
     std::fs::create_dir(&work).unwrap();
@@ -273,4 +276,56 @@ async fn failure_and_production_gate_never_advance_silently() {
         .unwrap();
     step(app.clone(), p).await.unwrap();
     assert_eq!(app.store.queue().unwrap()[0].state, "BLOCKED");
+}
+
+#[tokio::test]
+async fn github_report_must_be_confirmed_before_releasing_next_issue() {
+    let (_temp, app, p) = fixture(false, false).await;
+    app.github
+        .fixture_write_failure
+        .store(true, Ordering::SeqCst);
+    assert!(step(app.clone(), p).await.is_err());
+    assert_eq!(app.store.queue().unwrap()[0].state, "VALIDATING");
+    assert_eq!(app.store.queue().unwrap()[1].state, "QUEUED");
+    assert!(!app
+        .store
+        .executions()
+        .unwrap()
+        .iter()
+        .any(|e| e.state == "SUCCESS"));
+}
+#[tokio::test]
+async fn failed_validation_reports_blocker_without_closing_or_advancing() {
+    let (_temp, app, mut p) = fixture(false, false).await;
+    p.policy.test_commands = vec![vec![
+        "git".into(),
+        "rev-parse".into(),
+        "--verify".into(),
+        "refs/heads/does-not-exist".into(),
+    ]];
+    p.policy.close_issue = true;
+    step(app.clone(), p).await.unwrap();
+    assert_eq!(app.store.queue().unwrap()[0].state, "HUMAN_REVIEW");
+    assert_eq!(app.store.queue().unwrap()[1].state, "QUEUED");
+    let writes = app.github.fixture_writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0]["method"], "POST");
+    assert!(writes[0]["body"]["body"]
+        .as_str()
+        .unwrap()
+        .contains("validation blocked"));
+}
+
+#[tokio::test]
+async fn successful_validation_reports_then_closes_github_before_success() {
+    let (_temp, app, mut p) = fixture(false, false).await;
+    p.policy.close_issue = true;
+    step(app.clone(), p).await.unwrap();
+    let writes = app.github.fixture_writes.lock().unwrap();
+    assert_eq!(writes.len(), 2);
+    assert_eq!(writes[0]["method"], "POST");
+    assert_eq!(writes[1]["method"], "PATCH");
+    assert_eq!(app.store.issues("p").unwrap()[0].state, "CLOSED");
+    assert_eq!(app.store.queue().unwrap()[0].state, "SUCCESS");
+    assert_eq!(app.store.queue().unwrap()[1].state, "QUEUED");
 }

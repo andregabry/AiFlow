@@ -10,9 +10,11 @@ test("Projects lists GitHub repositories and selecting one loads its issues with
       __TAURI_INTERNALS__: unknown;
       __TAURI_EVENT_PLUGIN_INTERNALS__: unknown;
       issueRequests: string[];
+      runtimeRequests: Record<string, unknown>[];
     };
     w.isTauri = true;
     w.issueRequests = [];
+    w.runtimeRequests = [];
     localStorage.clear();
     localStorage.setItem("aiflow.theme", "Dark");
     const policy = {
@@ -102,6 +104,17 @@ test("Projects lists GitHub repositories and selecting one loads its issues with
           );
           return issues.get(id)?.length;
         }
+        if (command === "queue_runtime")
+          return {
+            mode: "local",
+            environmentId: "",
+            baseBranch: "main",
+            requiredChecks: [],
+          };
+        if (command === "queue_control") {
+          w.runtimeRequests.push(args.runtime as Record<string, unknown>);
+          return;
+        }
         if (command === "save_project") {
           const project = args.project as (typeof repos)[number];
           projects = projects.map((p) => (p.id === project.id ? project : p));
@@ -168,16 +181,16 @@ test("Projects lists GitHub repositories and selecting one loads its issues with
   await expect(page.getByRole("dialog", { name: "Issue #201" })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Add to queue", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   const detail = page.getByRole("dialog", { name: "Issue #201" });
   await expect(
     detail.getByRole("button", { name: "Dry run", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await expect(detail.getByRole("status")).toContainText(
-    "Link a local Git folder",
+    "No local folder is required",
   );
   await detail
-    .getByRole("button", { name: "Link local folder", exact: true })
+    .getByRole("button", { name: "Execution settings", exact: true })
     .click();
   await expect(
     page.getByRole("dialog", { name: "Project settings" }),
@@ -185,7 +198,9 @@ test("Projects lists GitHub repositories and selecting one loads its issues with
   await expect(
     page.getByLabel("GitHub repository", { exact: false }).first(),
   ).toHaveValue("sample/tools");
-  await page.getByLabel("Worktree root").fill("C:/work/sample-tools");
+  await page
+    .getByLabel("Independent validation commands", { exact: false })
+    .fill('[["git","status"]]');
   await page.getByRole("button", { name: "Save project", exact: true }).click();
   await expect(detail).toBeVisible();
   await expect(
@@ -206,5 +221,40 @@ test("Projects lists GitHub repositories and selecting one loads its issues with
     detail.getByRole("button", { name: "Retry", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Start queue", exact: true }).click();
+  const launch = page.getByRole("dialog", { name: "Start queue", exact: true });
+  await expect(launch.getByLabel("Execution environment")).toHaveValue("local");
+  await expect(launch).toContainText(
+    "AiFlow clones the repository into its own workspace",
+  );
+  await expect(
+    launch.getByRole("button", { name: "Start local queue", exact: true }),
+  ).toBeEnabled();
+  await launch
+    .getByRole("button", { name: "Start local queue", exact: true })
+    .click();
+  await expect(launch).toHaveCount(0);
+  await page.getByRole("button", { name: "Start queue", exact: true }).click();
+  await launch.getByLabel("Execution environment").selectOption("cloud");
+  await expect(
+    launch.getByRole("button", { name: "Start cloud queue", exact: true }),
+  ).toBeDisabled();
+  await launch.getByLabel("Codex cloud environment ID").fill("env_fixture");
+  await launch.getByLabel("Published base branch").fill("main");
+  await launch.getByLabel("Required GitHub check names").fill("tests\nbuild");
+  await expect(launch).toHaveCSS("opacity", "1");
+  await expect(launch.locator("..")).toHaveCSS("opacity", "1");
+  await page.screenshot({ path: "test-results/queue-environment-cloud.png" });
+  await launch
+    .getByRole("button", { name: "Start cloud queue", exact: true })
+    .click();
+  await expect(launch).toHaveCount(0);
+  const requests = await page.evaluate(
+    () =>
+      (window as unknown as { runtimeRequests: Record<string, unknown>[] })
+        .runtimeRequests,
+  );
+  expect(requests.map((r) => r.mode)).toEqual(["local", "cloud"]);
+  expect(requests[1].requiredChecks).toEqual(["tests", "build"]);
   await page.screenshot({ path: "test-results/github-repository-issues.png" });
 });

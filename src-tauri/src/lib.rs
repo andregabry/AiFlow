@@ -1,5 +1,6 @@
 mod account_auth;
 mod archive;
+mod cloud;
 mod execution;
 mod git;
 mod github;
@@ -8,6 +9,7 @@ mod persistence;
 mod providers;
 mod security;
 mod system;
+mod workspace;
 use fs2::FileExt;
 use model::*;
 use persistence::Store;
@@ -133,14 +135,16 @@ async fn save_project(
             return Err("Invalid validation command arguments".into());
         }
     }
-    let s = git::snapshot(&project.path).await?;
-    project.path = std::path::Path::new(&project.path)
-        .canonicalize()
-        .map_err(|e| e.to_string())?
-        .to_string_lossy()
-        .into();
-    if project.branch.is_empty() {
-        project.branch = s.branch;
+    if !project.path.trim().is_empty() {
+        let s = git::snapshot(&project.path).await?;
+        project.path = std::path::Path::new(&project.path)
+            .canonicalize()
+            .map_err(|e| e.to_string())?
+            .to_string_lossy()
+            .into();
+        if project.branch.is_empty() {
+            project.branch = s.branch;
+        }
     }
     if project.id.is_empty() {
         project.id = id();
@@ -427,11 +431,6 @@ fn enqueue(
     provider_id: String,
 ) -> Result<()> {
     let p = state.store.project(&project_id)?;
-    if p.path.trim().is_empty() {
-        return Err(
-            "Link a local worktree in repository settings before adding execution tasks".into(),
-        );
-    }
     state.providers.select(&provider_id, &p.policy)?;
     let i = state
         .store
@@ -447,14 +446,26 @@ fn enqueue(
     Ok(())
 }
 #[tauri::command]
+fn queue_runtime(
+    state: tauri::State<'_, Arc<AppState>>,
+    project_id: String,
+) -> Result<cloud::QueueRuntime> {
+    state.store.project(&project_id)?;
+    cloud::runtime(&state, &project_id)
+}
+#[tauri::command]
 fn queue_control(
     state: tauri::State<'_, Arc<AppState>>,
     project_id: String,
     action: String,
+    runtime: Option<cloud::QueueRuntime>,
 ) -> Result<()> {
-    state.store.project(&project_id)?;
+    let project = state.store.project(&project_id)?;
     match action.as_str() {
         "start" => {
+            let runtime =
+                runtime.ok_or("Choose the execution environment before starting the queue")?;
+            cloud::configure(&state, &project, &runtime)?;
             state.store.sql(
                 "UPDATE queues SET running=1,stop_after_current=0 WHERE project_id=?",
                 [&project_id],
@@ -473,6 +484,17 @@ fn queue_control(
             )?;
         }
         "cancel" => {
+            if let Some(flag) = state.active.lock().unwrap().get(&project_id) {
+                flag.store(true, Ordering::SeqCst);
+            }
+            if cloud::runtime(&state, &project_id)?.mode == "cloud" {
+                for mut execution in state.store.executions()?.into_iter().filter(|e| {
+                    e.project_id == project_id
+                        && matches!(e.state.as_str(), "PREPARING" | "RUNNING" | "VALIDATING")
+                }) {
+                    execution::transition(&state,&mut execution,"HUMAN_REVIEW",Some("Tracking stopped. The provider cloud task may still run; stop it on the provider before retrying".into()))?;
+                }
+            }
             state.store.sql(
                 "UPDATE queues SET running=0 WHERE project_id=?",
                 [&project_id],
@@ -503,7 +525,11 @@ fn item_control(
         .into_iter()
         .find(|i| i.id == item_id)
         .ok_or("Queue item not found")?;
-    if state.active.lock().unwrap().contains_key(&item.project_id) {
+    if matches!(
+        item.state.as_str(),
+        "RUNNING" | "PREPARING" | "VALIDATING" | "COMMITTING"
+    ) || state.active.lock().unwrap().contains_key(&item.project_id)
+    {
         return Err(
             "Pause the queue and wait for the active execution before changing queue items".into(),
         );
@@ -620,7 +646,11 @@ async fn dry_run(
 ) -> Result<Value> {
     let p = state.store.project(&project_id)?;
     let provider = state.providers.select(&provider_id, &p.policy)?;
-    let git = git::validate(&p).await?;
+    let git = if p.path.trim().is_empty() {
+        None
+    } else {
+        Some(git::validate(&p).await?)
+    };
     let i = state
         .store
         .issues(&p.id)?
@@ -629,7 +659,7 @@ async fn dry_run(
         .ok_or("Sync issues first")?;
     let health = provider.health_check().await;
     Ok(
-        json!({"provider":health,"git":git,"prompt":execution::prompt::build(&p,&i,None),"wouldCloseIssue":p.policy.close_issue,"validationCommands":p.policy.test_commands,"manualApprovalRequired":i.labels.iter().any(|l|p.policy.manual_approval_labels.contains(l))}),
+        json!({"provider":health,"git":git,"workspace":if p.path.is_empty() {"AiFlow will clone this repository automatically when execution starts"} else {"Existing local worktree"},"githubReport":"Validation evidence is published to the GitHub issue before the queue advances","validationConfigured":!p.policy.require_tests || !p.policy.test_commands.is_empty(),"prompt":execution::prompt::build(&p,&i,None),"wouldCloseIssue":p.policy.close_issue,"validationCommands":p.policy.test_commands,"manualApprovalRequired":i.labels.iter().any(|l|p.policy.manual_approval_labels.contains(l))}),
     )
 }
 #[tauri::command]
@@ -871,6 +901,7 @@ pub fn run() {
             sync_issues,
             enqueue,
             queue_control,
+            queue_runtime,
             item_control,
             reorder_queue,
             execution_events,

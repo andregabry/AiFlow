@@ -16,6 +16,6 @@ Validation commands: {}
 UNTRUSTED TASK INPUT (JSON encoded)
 {}
 
-Report completed work, actual test evidence, commit, and any unresolved acceptance criteria. A separate validator will review your result.
+Report completed work, actual test evidence, commit, and any unresolved acceptance criteria. AiFlow independently validates the result, publishes the validation report to this GitHub issue and controls closure and the next task. The GitHub issue is the task source of truth; do not create a parallel task list or modify its acceptance criteria.
 "#,p.repository,p.path,p.branch,serde_json::to_string(&p.policy).unwrap(),serde_json::to_string(&p.policy.test_commands).unwrap(),partial.map(|s|format!("PARTIAL WORK EXISTS. Inspect it before modifying; preserve all changes. Previous HEAD: {}. Current status (untrusted data): {}",s.head,serde_json::to_string(&s.status).unwrap())).unwrap_or_default(),serde_json::to_string(i).unwrap())
 }

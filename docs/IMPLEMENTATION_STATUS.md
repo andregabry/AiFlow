@@ -53,7 +53,7 @@ Recorded checks:
 - TypeScript typecheck, ESLint, Prettier and frontend production build passed.
 - 14 TypeScript unit tests passed.
 - 11 Playwright scenarios cover offline navigation/themes, project sheet keyboard behavior, connected-state/live IPC, GitHub's sequential connection modal, isolated provider login output/cancellation, inline errors plus unverifiable-account handling, and the build-without-OAuth fallback through official GitHub CLI, automatic internal-window commands and code display. Fixture data is **UI MOCK for tests only**, never shipped as real state.
-- 27 Rust tests passed: state transitions, provider classification, quota parsing, redaction, process streaming/cancellation, persistent replay/recovery, independent quotas, disposable Git probes/leases, sequential queue validation, quota resume preserving partial changes, and failure/production gates.
+- 36 Rust tests cover state transitions, provider classification, quotas, redaction, process supervision, replay/recovery, Git probes/leases, queue validation, managed clone/push/remote-SHA verification, GitHub report gates and cloud tracking/check validation. See the latest execution evidence for final run results.
 - Rust formatting and Clippy `--all-targets -- -D warnings` passed with no warnings.
 - npm audit reported 0 vulnerabilities. No failed test was converted into a skip.
 - Native Windows release built and opened successfully, showing Local backend connected, Codex CLI 0.163.0 detected, and Claude/Gemini NOT INSTALLED.
@@ -80,3 +80,11 @@ Accounts now uses verifiable existing CLI sessions first, forms without terminal
 ## GitHub repository catalog
 
 Projects is now the account-scoped GitHub repository catalog, refreshed automatically after connection. Repository selection loads open/closed issues immediately and on a two-minute refresh interval; browsing no longer needs a local worktree. Local folder and execution policy are attached only when running tasks. Stable GitHub repository IDs preserve configuration through renames, and removed access hides the repo without deleting operational history. Full successful issue sync replaces stale remote issue rows transactionally and keeps task history. Catalog/account/configuration-preservation and issue-replacement tests passed, as did a browser scenario covering automatic import, repository selection, GitHub state filtering, folder-free issue browsing and the local-folder execution guard. A live CLI read returned 9 accessible repositories including AiFlow; AiFlow currently has 0 remote issues.
+
+## GitHub-driven execution and environment selection
+
+The latest flow supersedes the local-folder enqueue guard above: enqueue needs no folder, and Start queue asks for this computer or provider cloud. Local mode can clone automatically, validate and publish the exact commit to a scoped work branch. GitHub validation reports must be confirmed before queue progression; closure remains project policy.
+
+Codex-only cloud dispatch uses the official CLI and a configured repository environment. It tracks the exact result branch, PR and named GitHub checks without cloning locally. Pending/missing checks do not advance. Remote task references survive restart without resubmission. A provider diff must be published through the provider UI if its environment cannot publish a branch/PR. Claude/Gemini cloud adapters and live cloud model execution remain unvalidated/unimplemented as applicable.
+
+Verification includes a disposable local bare repository for clone/push/SHA confirmation, preservation of partial changes, report failure blocking progression, failed validation retaining the issue, report-before-close order, cloud pending-check gating and restart tracking. Browser fixtures verify folder-free enqueue and both environment selections with their actual IPC arguments. The installed Codex CLI advertises cloud exec/status/list, and read-only cloud listing succeeded with no tasks. No live model task was launched during verification.

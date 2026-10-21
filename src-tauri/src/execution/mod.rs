@@ -2,7 +2,7 @@ pub mod process;
 pub mod prompt;
 pub mod state;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 use crate::{git, model::*, AppState};
 use rusqlite::params;
 use serde_json::json;
@@ -11,6 +11,18 @@ use std::sync::{
     Arc,
 };
 
+pub fn check_cancelled(app: &AppState, project_id: &str) -> Result<()> {
+    if app
+        .active
+        .lock()
+        .unwrap()
+        .get(project_id)
+        .is_some_and(|flag| flag.load(Ordering::SeqCst))
+    {
+        return Err("Cancelled during validation or publication. Review remote state before retrying; the next issue was not released".into());
+    }
+    Ok(())
+}
 pub fn transition(
     app: &AppState,
     e: &mut Execution,
@@ -47,7 +59,10 @@ pub fn scheduler(app: Arc<AppState>) {
             {
                 continue;
             }
-            let projects = match app.store.projects() {
+            let Some(account) = app.github.account().await else {
+                continue;
+            };
+            let projects = match app.store.account_projects(&account) {
                 Ok(v) => v,
                 Err(_) => continue,
             };
@@ -81,7 +96,14 @@ pub fn scheduler(app: Arc<AppState>) {
                 }
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(err) = step(app.clone(), p.clone()).await {
+                    let result = match crate::cloud::runtime(&app, &p.id) {
+                        Ok(runtime) if runtime.mode == "cloud" => {
+                            crate::cloud::step(app.clone(), p.clone(), runtime).await
+                        }
+                        Ok(_) => step(app.clone(), p.clone()).await,
+                        Err(err) => Err(err),
+                    };
+                    if let Err(err) = result {
                         if let Ok(executions) = app.store.executions() {
                             if let Some(mut e) = executions.into_iter().find(|e| {
                                 e.project_id == p.id
@@ -219,6 +241,17 @@ async fn step(app: Arc<AppState>, p: Project) -> Result<()> {
             Some("Maximum attempts reached. Review history and project policy.".into()),
         );
     }
+    let p = match crate::workspace::prepare(&app, p).await {
+        Ok(p) => p,
+        Err(reason) => {
+            return transition(
+                &app,
+                &mut e,
+                "BLOCKED",
+                Some(format!("Could not prepare managed checkout: {reason}")),
+            )
+        }
+    };
     let lease = match git::lock(&p.path).await {
         Ok(v) => v,
         Err(err) => return transition(&app, &mut e, "BLOCKED", Some(err)),
@@ -436,6 +469,11 @@ async fn step(app: Arc<AppState>, p: Project) -> Result<()> {
     transition(&app, &mut e, "VALIDATING", None)?;
     let validation = validate(&app, &p, &mut e, result.code).await;
     if let Err(reason) = validation {
+        let report=app.github.report(&p,item.issue_number,&format!("### AiFlow: validation blocked\n\nExecution `{}` did not pass independent validation. AiFlow has not closed this issue or released the next task.\n\n{}",e.id,crate::security::redact(&reason))).await;
+        let reason = match report {
+            Ok(_) => reason,
+            Err(err) => format!("{reason}. Could not publish the blocked report: {err}"),
+        };
         return transition(&app, &mut e, "HUMAN_REVIEW", Some(reason));
     }
     let latest = app
@@ -445,10 +483,56 @@ async fn step(app: Arc<AppState>, p: Project) -> Result<()> {
     if latest.updated_at != issue.updated_at || latest.state != "OPEN" {
         return transition(&app,&mut e,"HUMAN_REVIEW",Some("GitHub issue changed during execution. Review the latest acceptance criteria and remote state before completing.".into()));
     }
+    let head = e
+        .after_git
+        .as_ref()
+        .ok_or("Missing validated Git snapshot")?
+        .head
+        .clone();
+    check_cancelled(&app, &p.id)?;
+    let published = crate::workspace::publish(&app, &p, &head).await?;
+    if p.policy.require_ci && !app.github.ci_passed(&p, &head).await? {
+        return transition(
+            &app,
+            &mut e,
+            "HUMAN_REVIEW",
+            Some(
+                "Required GitHub checks have not passed for the validated commit. Queue stopped."
+                    .into(),
+            ),
+        );
+    }
+    let body = completion_report(
+        &p,
+        &e,
+        if published {
+            "Published to the managed GitHub branch"
+        } else {
+            "Local worktree; commit has not been published by AiFlow"
+        },
+    );
+    check_cancelled(&app, &p.id)?;
+    let url = app.github.report(&p, item.issue_number, &body).await?;
+    app.emit(
+        &e,
+        "ISSUE_REPORT_PUBLISHED",
+        json!({"url":url,"head":head,"published":published}),
+    )?;
+    check_cancelled(&app, &p.id)?;
     if p.policy.close_issue {
         app.github.close(&p, item.issue_number).await?;
+        if app
+            .github
+            .refresh_issue(&app.store, &p, item.issue_number)
+            .await?
+            .state
+            != "CLOSED"
+        {
+            return Err("Issue closure was not confirmed by the latest GitHub state".into());
+        }
         app.emit(&e, "ISSUE_STATE_CHANGED", json!({"githubState":"CLOSED"}))?;
     }
+    check_cancelled(&app, &p.id)?;
     app.store.sql(
         "DELETE FROM provider_usage WHERE provider_id=?",
         [provider.id()],
@@ -576,13 +660,19 @@ async fn validate(app: &AppState, p: &Project, e: &mut Execution, code: Option<i
         .map_err(|_| "Commit history is not a fast-forward from the original HEAD")?;
         app.emit(e, "COMMIT_CREATED", json!({"head":after.head}))?;
     }
-    if p.policy.require_ci && !app.github.ci_passed(p, &after.head).await? {
-        return Err("Required CI has not passed. No automatic push is performed.".into());
-    }
     app.emit(
         e,
         "VALIDATION_FINISHED",
         json!({"passed":true,"testCommands":p.policy.test_commands.len(),"head":after.head}),
     )?;
     Ok(())
+}
+
+pub fn completion_report(p: &Project, e: &Execution, publication: &str) -> String {
+    let head = e
+        .after_git
+        .as_ref()
+        .map(|s| s.head.as_str())
+        .unwrap_or("not available");
+    format!("### AiFlow: independently validated\n\n- Execution: `{}`\n- Provider: `{}`\n- Commit: `{}`\n- Branch: `{}`\n- Publication: {}\n- Independent validation commands passed: {}\n- Required GitHub checks: {}\n\nThe controller releases the next queued issue only after GitHub confirms this report{}.",e.id,e.provider_id,head,p.branch,publication,p.policy.test_commands.len(),if p.policy.require_ci {"passed on this exact commit"} else {"not required by policy"},if p.policy.close_issue {" and issue closure"} else {""})
 }

@@ -22,3 +22,6 @@ CREATE TABLE IF NOT EXISTS github_cache(url TEXT PRIMARY KEY, etag TEXT, data TE
 INSERT OR IGNORE INTO schema_migrations VALUES(1, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
 
 CREATE TABLE IF NOT EXISTS github_repository_catalog(account TEXT NOT NULL, repository_id TEXT NOT NULL, project_id TEXT NOT NULL, repository TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(account,repository_id));
+
+CREATE TABLE IF NOT EXISTS queue_runtimes(project_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS cloud_runs(execution_id TEXT PRIMARY KEY, data TEXT NOT NULL);

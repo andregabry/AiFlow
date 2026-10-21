@@ -1,0 +1,256 @@
+use crate::{git, model::*, AppState};
+use std::path::Path;
+
+pub fn branch(project_id: &str) -> String {
+    format!("work/aiflow-{project_id}")
+}
+fn destination(root: &Path, id: &str) -> Result<std::path::PathBuf> {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("Invalid managed workspace identifier".into());
+    }
+    Ok(root.join(id))
+}
+pub fn is_managed(app: &AppState, p: &Project) -> Result<bool> {
+    let root = app.store.workspace_root()?;
+    if p.path.is_empty() || !root.exists() {
+        return Ok(false);
+    }
+    let expected = destination(&root.canonicalize().map_err(|e| e.to_string())?, &p.id)?;
+    if !expected.exists() {
+        return Ok(false);
+    }
+    if expected.canonicalize().map_err(|e| e.to_string())? != expected {
+        return Err("Managed workspace directory was redirected".into());
+    }
+    Ok(Path::new(&p.path)
+        .canonicalize()
+        .map_err(|e| e.to_string())?
+        == expected)
+}
+fn helper() -> Result<String> {
+    let gh = crate::github::GitHubService::cli_launch()?;
+    let executable = gh.program.to_string_lossy().replace('\\', "/");
+    if executable.contains(['"', '\n', '\r']) {
+        return Err("Unsupported GitHub CLI installation path".into());
+    }
+    Ok(format!("!\"{executable}\" auth git-credential"))
+}
+async fn authenticated(path: &str, args: &[&str]) -> Result<String> {
+    git::git(
+        path,
+        &[
+            &[
+                "-c",
+                "credential.helper=",
+                "-c",
+                &format!("credential.helper={}", helper()?),
+            ][..],
+            args,
+        ]
+        .concat(),
+    )
+    .await
+}
+async fn repository_git(path: &str, args: &[&str], use_auth: bool) -> Result<String> {
+    if use_auth {
+        authenticated(path, args).await
+    } else {
+        git::git(path, args).await
+    }
+}
+async fn checkout(
+    root: &Path,
+    p: &Project,
+    remote: &str,
+    use_auth: bool,
+) -> Result<(String, String)> {
+    if p.branch.is_empty() || p.branch.starts_with('-') {
+        return Err("Missing valid default branch".into());
+    }
+
+    std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let target = destination(&root, &p.id)?;
+
+    let local = git::portable_path(&target)?;
+    if !target.exists() {
+        repository_git(
+            root.to_str().ok_or("Invalid workspace root")?,
+            &[
+                "clone",
+                "--single-branch",
+                "--no-recurse-submodules",
+                "--branch",
+                &p.branch,
+                "--",
+                remote,
+                &local,
+            ],
+            use_auth,
+        )
+        .await?;
+    }
+    if target.canonicalize().map_err(|e| e.to_string())? != target {
+        return Err("Managed workspace must not redirect outside its assigned directory".into());
+    }
+    if git::git(&local, &["remote", "get-url", "origin"]).await? != remote {
+        return Err("Managed workspace origin changed; review it before continuing".into());
+    }
+    let expected = branch(&p.id);
+    let snapshot = git::snapshot(&local).await?;
+    if snapshot.branch != expected {
+        if snapshot.branch != p.branch || !snapshot.status.is_empty() {
+            return Err("Managed workspace contains unexpected work; preserved for review".into());
+        }
+        git::git(&local, &["checkout", "-b", &expected]).await?;
+    }
+    Ok((local, expected))
+}
+pub async fn prepare(app: &AppState, mut p: Project) -> Result<Project> {
+    if !p.path.trim().is_empty() {
+        return Ok(p);
+    }
+    if !crate::security::safe_repository(&p.repository) {
+        return Err("Invalid repository".into());
+    }
+    let root = app.store.workspace_root()?;
+    let remote = format!("https://github.com/{}.git", p.repository);
+    let (local, expected) = checkout(&root, &p, &remote, true).await?;
+    let (name, email) = app.github.git_identity().await?;
+    git::git(&local, &["config", "--local", "user.name", &name]).await?;
+    git::git(&local, &["config", "--local", "user.email", &email]).await?;
+    p.path = local;
+    p.branch = expected;
+    app.store.save_project(&p)?;
+    app.store.audit(
+        "MANAGED_WORKSPACE_PREPARED",
+        serde_json::json!({"projectId":p.id,"branch":p.branch}),
+    )?;
+    app.changed();
+    Ok(p)
+}
+pub async fn publish(app: &AppState, p: &Project, head: &str) -> Result<bool> {
+    if !is_managed(app, p)? {
+        return Ok(false);
+    }
+    let remote = format!("https://github.com/{}.git", p.repository);
+    publish_to(p, head, &remote, true).await?;
+    Ok(true)
+}
+async fn publish_to(p: &Project, head: &str, remote: &str, use_auth: bool) -> Result<()> {
+    if p.branch != branch(&p.id) {
+        return Err("Unexpected managed branch; refusing publication".into());
+    }
+    let current = git::snapshot(&p.path).await?;
+    if current.head != head || current.branch != p.branch || !current.status.is_empty() {
+        return Err("Worktree changed after validation; publication stopped".into());
+    }
+    let refname = format!("refs/heads/{}", p.branch);
+    repository_git(
+        &p.path,
+        &[
+            "push",
+            "--porcelain",
+            "--",
+            remote,
+            &format!("{head}:{refname}"),
+        ],
+        use_auth,
+    )
+    .await?;
+    let actual = repository_git(
+        &p.path,
+        &["ls-remote", "--exit-code", "--", remote, &refname],
+        use_auth,
+    )
+    .await?;
+    if actual.split_whitespace().next() != Some(head) {
+        return Err("GitHub did not confirm the validated commit".into());
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn managed_checkout_and_publication_preserve_work_and_verify_exact_remote_head() {
+        let (_fixture, app, mut p) = crate::execution::tests::fixture(false, false).await;
+        let temp = tempfile::tempdir().unwrap();
+        let remote = temp.path().join("origin.git");
+        git::git(
+            temp.path().to_str().unwrap(),
+            &["clone", "--bare", "--", &p.path, remote.to_str().unwrap()],
+        )
+        .await
+        .unwrap();
+        p.path.clear();
+        let root = temp.path().join("managed");
+        let (local, expected) = checkout(&root, &p, remote.to_str().unwrap(), false)
+            .await
+            .unwrap();
+        p.path = local;
+        p.branch = expected;
+        std::fs::write(Path::new(&p.path).join("result.txt"), "validated result").unwrap();
+        git::git(&p.path, &["add", "result.txt"]).await.unwrap();
+        git::git(
+            &p.path,
+            &[
+                "-c",
+                "user.name=AiFlow Test",
+                "-c",
+                "user.email=test@localhost",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "completed issue",
+            ],
+        )
+        .await
+        .unwrap();
+        let head = git::snapshot(&p.path).await.unwrap().head;
+        publish_to(&p, &head, remote.to_str().unwrap(), false)
+            .await
+            .unwrap();
+        assert_eq!(
+            git::git(
+                remote.to_str().unwrap(),
+                &["rev-parse", &format!("refs/heads/{}", p.branch)]
+            )
+            .await
+            .unwrap(),
+            head
+        );
+        std::fs::write(Path::new(&p.path).join("partial.txt"), "preserve this").unwrap();
+        assert!(publish_to(&p, &head, remote.to_str().unwrap(), false)
+            .await
+            .is_err());
+        let again = checkout(&root, &p, remote.to_str().unwrap(), false)
+            .await
+            .unwrap();
+        assert_eq!(again.0, p.path);
+        assert_eq!(
+            std::fs::read_to_string(Path::new(&p.path).join("partial.txt")).unwrap(),
+            "preserve this"
+        );
+        assert_eq!(
+            git::git(remote.to_str().unwrap(), &["rev-parse", "refs/heads/main"])
+                .await
+                .unwrap(),
+            git::snapshot(&app.store.project("p").unwrap().path)
+                .await
+                .unwrap()
+                .head
+        );
+    }
+    #[test]
+    fn destinations_are_confined_and_branches_are_scoped() {
+        assert!(destination(Path::new("root"), "../outside").is_err());
+        assert!(destination(Path::new("root"), "C:/other").is_err());
+        assert_eq!(
+            destination(Path::new("root"), "project-123").unwrap(),
+            Path::new("root").join("project-123")
+        );
+        assert_eq!(branch("project-123"), "work/aiflow-project-123");
+    }
+}

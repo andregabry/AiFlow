@@ -14,7 +14,21 @@ pub fn command(program: &str) -> Command {
     cmd
 }
 
+pub fn portable_path(path: &Path) -> Result<String> {
+    let value = path.to_str().ok_or("Invalid Git path encoding")?;
+    #[cfg(windows)]
+    let value = if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
+        format!("//{}", unc.replace('\\', "/"))
+    } else {
+        value
+            .strip_prefix(r"\\?\")
+            .unwrap_or(value)
+            .replace('\\', "/")
+    };
+    Ok(value.to_string())
+}
 pub async fn git(path: &str, args: &[&str]) -> Result<String> {
+    let path = portable_path(Path::new(path))?;
     let o = command("git")
         .args([
             "-c",
@@ -22,7 +36,7 @@ pub async fn git(path: &str, args: &[&str]) -> Result<String> {
             "-c",
             "core.fsmonitor=false",
             "-C",
-            path,
+            &path,
         ])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")

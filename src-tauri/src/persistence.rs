@@ -36,8 +36,13 @@ impl Store {
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())
     }
-    pub fn projects(&self) -> Result<Vec<Project>> {
-        self.json_rows("SELECT data FROM projects", [])
+    pub fn workspace_root(&self) -> Result<std::path::PathBuf> {
+        let c = self.0.lock().map_err(|e| e.to_string())?;
+        let path = c.path().ok_or("Missing database path")?;
+        Ok(Path::new(path)
+            .parent()
+            .ok_or("Missing app data directory")?
+            .join("workspaces"))
     }
     pub fn account_projects(&self, account: &str) -> Result<Vec<Project>> {
         self.json_rows("SELECT p.data FROM projects p JOIN github_repository_catalog c ON c.project_id=p.id WHERE c.account=? ORDER BY c.repository COLLATE NOCASE", [account])
@@ -330,8 +335,8 @@ impl Store {
     pub fn recover(&self) -> Result<()> {
         // OS-level process/worktree leases are acquired before recovery by the app instance.
         self.sql("UPDATE queues SET running=0", [])?;
-        self.sql("UPDATE executions SET state='HUMAN_REVIEW', reason='AiFlow stopped during execution. Inspect worktree and partial changes before retrying.' WHERE state IN ('PREPARING','RUNNING','VALIDATING','COMMITTING')",[])?;
-        self.sql("UPDATE queue_items SET state='HUMAN_REVIEW' WHERE state IN ('PREPARING','RUNNING','VALIDATING','COMMITTING')",[])?;
+        self.sql("UPDATE executions SET state='HUMAN_REVIEW', reason='AiFlow stopped during execution. Inspect worktree and partial changes before retrying.' WHERE state IN ('PREPARING','RUNNING','VALIDATING','COMMITTING') AND NOT (state='RUNNING' AND id IN (SELECT execution_id FROM cloud_runs WHERE json_extract(data,'$.taskId') IS NOT NULL))",[])?;
+        self.sql("UPDATE queue_items SET state='HUMAN_REVIEW' WHERE state IN ('PREPARING','RUNNING','VALIDATING','COMMITTING') AND id NOT IN (SELECT e.item_id FROM executions e JOIN cloud_runs c ON c.execution_id=e.id WHERE json_extract(c.data,'$.taskId') IS NOT NULL AND e.state='RUNNING')",[])?;
         self.audit(
             "SESSION_RECOVERY",
             serde_json::json!({"action":"queues paused; interrupted attempts require review"}),
