@@ -1,0 +1,95 @@
+:root {
+  font-family:
+    "Segoe UI Variable",
+    "SF Pro Display",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --font-mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  --accent: #b6d8b2;
+  --accent-text: #17291c;
+  --bg: #111518;
+  --sidebar: #151a1de8;
+  --surface: #1b2023e8;
+  --surface-raised: #242a2ef5;
+  --surface-hover: #ffffff06;
+  --surface-selected: #b6d8b210;
+  --text: #edf0ed;
+  --text-secondary: #a2aaa9;
+  --muted: #7e8988;
+  --line: #ffffff0c;
+  --line-strong: #ffffff16;
+  --shadow: 0 12px 34px #00000014, inset 0 1px 0 #ffffff04;
+  --glass-shadow: 0 24px 80px #00000060, inset 0 1px 0 #ffffff13;
+  --blur: 24px;
+  --radius-sm: 7px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 40px;
+  --motion-fast: 120ms;
+  --motion-normal: 240ms;
+  --motion-slow: 400ms;
+  --danger: #e9a19a;
+  --warning: #dfc08b;
+  --blue: #9dbbd5;
+  --z-sheet: 50;
+  --z-toast: 100;
+  color-scheme: dark;
+  color: var(--text);
+  background: var(--bg);
+}
+:root[data-theme="light"] {
+  --accent: #496f50;
+  --accent-text: #fff;
+  --bg: #f4f5f2;
+  --sidebar: #e9ede7ed;
+  --surface: #ffffffc9;
+  --surface-raised: #fff;
+  --surface-hover: #213e2106;
+  --surface-selected: #486e4b12;
+  --text: #222c26;
+  --text-secondary: #566159;
+  --muted: #68736a;
+  --line: #25392b0c;
+  --line-strong: #25392b1c;
+  --shadow: 0 12px 34px #263c2806, inset 0 1px 0 #ffffffd0;
+  --glass-shadow: 0 24px 80px #122a2224, inset 0 1px 0 #fff;
+  --danger: #a63730;
+  --warning: #866018;
+  --blue: #3b6592;
+  color-scheme: light;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --blur: 0;
+    --surface: var(--bg);
+    --sidebar: var(--bg);
+  }
+}
+@media (prefers-contrast: more) {
+  :root {
+    --muted: var(--text-secondary);
+    --line: var(--text-secondary);
+    --line-strong: var(--text);
+  }
+}

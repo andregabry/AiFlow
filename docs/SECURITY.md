@@ -1,0 +1,20 @@
+# Threat model and security boundaries
+
+| Threat                        | Implemented control                                                                      | Remaining limit                                                                                                     |
+| ----------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Issue prompt injection        | Policy hierarchy, JSON-delimited untrusted issue/comments, local policy commands         | Prompt instructions are not an OS sandbox; a coding agent can still misbehave                                       |
+| Shell/CLI injection           | Argument arrays, stdin prompts, no frontend shell, native/Node invocation                | Trusted project validation commands can execute code                                                                |
+| Malicious repository          | Canonical worktree root, expected branch, Git hooks/fsmonitor disabled for safety probes | Provider tools may load repository configuration, hooks or instructions; only use trusted repos                     |
+| Concurrent worktree mutation  | OS file lease per Git worktree + instance lease + persistent record                      | External editors and non-AiFlow agents do not honor AiFlow leases                                                   |
+| Path/symlink aliases          | Canonical paths and root equality                                                        | A hostile local user can race filesystem mutations; not a defense against another OS account with full write access |
+| Provider process orphaning    | Child kill-on-drop; Windows job containment; process-tree cancellation                   | Unix/macOS abrupt-parent-death containment requires additional validation                                           |
+| OAuth theft                   | OS vault; no tokens in renderer/storage; HTTPS; bounded Device Flow polling              | OS user compromise and malicious extensions remain out of scope                                                     |
+| Log leakage                   | Redaction before persistence and UI; output treated as text                              | Pattern redaction is best-effort; agents must not print secrets                                                     |
+| Output XSS/terminal injection | React text nodes; ANSI/OSC stripped; no provider HTML execution                          | Raw means secret-redacted original payload rendered safely, not byte-for-byte TTY emulation                         |
+| Unsafe completion             | Central state machine, independent Git/tests/CI checks, manual production gates          | Semantic acceptance criteria require adequate project tests or human review                                         |
+| Supply chain/update           | Dependency locks, npm audit, OS signing documentation, no auto-update downloads          | Release signing/notarization and dependency review required before distribution                                     |
+| Tauri IPC                     | Narrow command set, CSP, no shell/filesystem frontend plugin grants                      | Commands are trusted by the local renderer; no remote web content should be embedded                                |
+
+Never automatically reset --hard, clean, rebase, force push, deploy or discard partial work. AiFlow itself issues only non-destructive Git inspection commands. Those constraints are also in the provider prompt; they do not substitute for provider sandboxing. No universal sandbox equivalence across the three clients is claimed.
+
+Do not put credentials in issue bodies or repository test commands. Restore backups only while AiFlow is stopped, preserving database and archive together. Do not treat this preview as production-hardened until live provider, recovery, signing and platform validation are complete.

@@ -1,0 +1,1931 @@
+==================================================
+61. REQUISITO CRÍTICO: OUTPUT DO AGENTE EM TEMPO REAL
+==================================================
+
+O AiFlow DEVE apresentar dentro da própria aplicação, em tempo real, o mesmo output que o utilizador veria ao executar diretamente:
+
+- OpenAI Codex
+- Claude / Claude Code
+- Gemini / Gemini CLI
+
+no terminal.
+
+Isto é um requisito central do produto.
+
+Não quero apenas:
+
+"Agent is running..."
+
+ou:
+
+"Task executing..."
+
+Quero acompanhar efetivamente o agente trabalhando.
+
+Exemplo:
+
+────────────────────────────────────────────────────
+Issue #27
+Implement PostgreSQL runtime validation
+
+Provider
+OpenAI Codex
+
+RUNNING
+────────────────────────────────────────────────────
+
+09:42:13  Inspecting repository...
+09:42:14  Reading migration documentation...
+09:42:19  Found 3 remaining SQLite imports.
+09:42:31  Updating lib/runtime.ts...
+09:43:08  Running:
+          npm test
+
+09:44:52  ✓ 287 tests passed
+
+09:45:03  Running:
+          npm run build
+
+09:47:12  ✓ Build completed
+
+09:47:24  Creating commit...
+09:47:29  Commit 4d7dbe3...
+
+────────────────────────────────────────────────────
+
+O output deve aparecer conforme é produzido.
+
+NÃO esperar o processo terminar para mostrar o log.
+
+==================================================
+62. STREAMING REAL DE STDOUT / STDERR
+==================================================
+
+O backend deve capturar e transmitir continuamente:
+
+stdout
+stderr
+
+do processo do provider.
+
+Arquitetura conceitual:
+
+Provider CLI process
+       ↓
+stdout / stderr
+       ↓
+Provider Adapter
+       ↓
+Execution Event Stream
+       ↓
+Tauri IPC/Event Channel
+       ↓
+React UI
+       ↓
+Live Execution Console
+
+Não utilizar polling de ficheiros como mecanismo principal se streaming direto do processo estiver disponível.
+
+O frontend deve receber eventos incrementais.
+
+Exemplo conceitual:
+
+ExecutionOutputEvent {
+    executionId
+    providerId
+    timestamp
+    stream
+    content
+    sequence
+}
+
+stream:
+
+stdout
+stderr
+system
+git
+validation
+
+==================================================
+63. RAW OUTPUT + OUTPUT INTERPRETADO
+==================================================
+
+Quero duas formas de visualização.
+
+MODE:
+
+Formatted
+Raw
+
+Formatted:
+
+AiFlow interpreta certos eventos para tornar a experiência agradável.
+
+Exemplo:
+
+✓ Build completed
+✓ 287 tests passed
+⚠ Usage limit reached
+◉ Running npm test
+● Editing runtime.ts
+
+Raw:
+
+mostrar exatamente o output recebido do provider, preservando o máximo possível da experiência do terminal.
+
+Permitir alternar:
+
+[ Formatted ] [ Raw ]
+
+Nunca esconder erros no modo Formatted.
+
+==================================================
+64. ANSI / TERMINAL OUTPUT
+==================================================
+
+Providers podem produzir:
+
+ANSI colors
+progress indicators
+multiline output
+spinner output
+carriage returns
+
+Criar um terminal renderer adequado.
+
+Suportar ANSI quando seguro.
+
+Não mostrar sequências como:
+
+\x1b[32m
+
+na interface.
+
+Converter adequadamente ou remover quando necessário.
+
+Não interpretar conteúdo do provider como HTML.
+
+Evitar XSS/injection através do output.
+
+==================================================
+65. LIVE EXECUTION VIEW
+==================================================
+
+Criar uma tela central chamada:
+
+Execution Center
+
+Layout sugerido:
+
+┌──────────────────────────────────────────────────────────────┐
+│ Issue #27                         RUNNING        00:18:24    │
+│ PostgreSQL Runtime Validation                               │
+├──────────────────────┬───────────────────────────────────────┤
+│                      │                                       │
+│ Execution Timeline   │ LIVE AGENT OUTPUT                     │
+│                      │                                       │
+│ ✓ Preparing          │ Inspecting repository...              │
+│ ✓ Git check          │ Reading package.json...               │
+│ ▶ Agent running      │ ...                                   │
+│ ○ Validation         │                                       │
+│ ○ Commit             │                                       │
+│ ○ GitHub             │                                       │
+│                      │                                       │
+├──────────────────────┴───────────────────────────────────────┤
+│ Provider: Codex     Branch: migration/postgresql-finalization│
+└──────────────────────────────────────────────────────────────┘
+
+O painel de output deve ser redimensionável.
+
+Permitir maximizar o output.
+
+==================================================
+66. LIVE EXECUTION CONTROLS
+==================================================
+
+Durante a execução mostrar:
+
+Pause Queue
+Stop After Current
+Cancel Execution
+Open Repository
+Open GitHub Issue
+Copy Output
+Clear View
+Search Logs
+
+Quando suportado pelo provider:
+
+Stop Agent
+
+Cancel deve exigir confirmação se houver risco de deixar alterações parciais.
+
+==================================================
+67. OUTPUT PERSISTENTE
+==================================================
+
+Todo output deve ser persistido.
+
+Se eu fechar o AiFlow e abrir novamente:
+
+a execução anterior deve continuar visível.
+
+Guardar:
+
+executionId
+attemptId
+provider
+timestamp
+sequence
+stream
+message
+
+Logs muito grandes podem ser armazenados em ficheiros e indexados no SQLite.
+
+Não guardar gigabytes de output diretamente numa única tabela SQLite.
+
+Criar estratégia de rotação/arquivamento.
+
+==================================================
+68. GITHUB ISSUES DENTRO DO AIFLOW
+==================================================
+
+Não quero utilizar o GitHub apenas como backend invisível.
+
+O AiFlow deve possuir uma interface completa para consultar e administrar as Issues diretamente dentro da aplicação.
+
+Página:
+
+Issues
+
+Deve obter diretamente do GitHub:
+
+- número;
+- título;
+- descrição;
+- estado;
+- labels;
+- assignees;
+- milestone;
+- comentários;
+- created_at;
+- updated_at;
+- closed_at;
+- URL;
+- linked PRs quando disponível;
+- commits/evidências quando aplicável.
+
+==================================================
+69. ESTADOS VISUAIS DAS ISSUES
+==================================================
+
+Quero três estados principais extremamente claros:
+
+TO DO
+IN PROGRESS
+DONE
+
+Visualmente:
+
+○ TO DO
+
+◉ IN PROGRESS
+
+✓ DONE
+
+O AiFlow deve manter o estado operacional da Issue mesmo quando o GitHub nativamente possui apenas:
+
+OPEN
+CLOSED
+
+Portanto separar:
+
+GitHubIssueState:
+
+OPEN
+CLOSED
+
+AiFlowTaskState:
+
+TODO
+IN_PROGRESS
+DONE
+BLOCKED
+WAITING
+FAILED
+PAUSED
+
+Exemplo:
+
+GitHub:
+OPEN
+
+AiFlow:
+IN_PROGRESS
+
+Quando a execução for concluída e a policy permitir:
+
+GitHub:
+CLOSED
+
+AiFlow:
+DONE
+
+==================================================
+70. SINCRONIZAÇÃO DE ESTADO COM GITHUB
+==================================================
+
+Ao iniciar uma Issue:
+
+AiFlowTaskState:
+
+TODO
+→
+IN_PROGRESS
+
+Ao concluir:
+
+IN_PROGRESS
+→
+DONE
+
+Opcionalmente sincronizar também com GitHub através de:
+
+labels
+GitHub Projects fields
+
+quando configurado.
+
+Exemplo opcional:
+
+status:todo
+status:in-progress
+status:done
+
+Mas NÃO criar/modificar labels automaticamente sem configuração.
+
+Criar:
+
+GitHubStatusSyncPolicy
+
+Options:
+
+LocalOnly
+Labels
+GitHubProject
+Both
+
+Default:
+
+LocalOnly
+
+==================================================
+71. GITHUB PROJECTS
+==================================================
+
+Preparar suporte a GitHub Projects.
+
+Quando um repository utilizar GitHub Projects e o utilizador autorizar:
+
+TO DO
+→ Project Status = Todo
+
+IN PROGRESS
+→ Project Status = In Progress
+
+DONE
+→ Project Status = Done
+
+Não assumir nomes fixos.
+
+Descobrir fields/options reais do Project.
+
+==================================================
+72. BOARD VISUAL
+==================================================
+
+Criar visualização:
+
+Board
+
+Inspirado em ferramentas modernas de gestão.
+
+Colunas:
+
+TO DO
+IN PROGRESS
+DONE
+
+Exemplo:
+
+╭────────────────────╮
+│ TO DO          8   │
+├────────────────────┤
+│ #28 Regression     │
+│ Claude             │
+│ P1                 │
+├────────────────────┤
+│ #29 Security       │
+│ Gemini             │
+│ P1                 │
+╰────────────────────╯
+
+╭────────────────────╮
+│ IN PROGRESS    1   │
+├────────────────────┤
+│ #27 PostgreSQL     │
+│ Codex              │
+│ ● RUNNING 18m      │
+╰────────────────────╯
+
+╭────────────────────╮
+│ DONE           14  │
+├────────────────────┤
+│ ✓ #26 G-2          │
+│ ✓ #25 G-1          │
+╰────────────────────╯
+
+Drag & drop quando aplicável.
+
+==================================================
+73. LIST VIEW
+==================================================
+
+Também quero:
+
+List View
+
+Visual semelhante a uma aplicação nativa premium.
+
+Exemplo:
+
+STATUS       ISSUE     TITLE                         PROVIDER   PRIORITY
+
+✓ Done       #26       Remove SQLite runtime         Codex      P0
+✓ Done       #25       SQLite inventory              Codex      P0
+◉ Running    #27       PostgreSQL certification      Codex      P0
+○ Todo       #28       Full regression               Claude     P1
+○ Todo       #29       Security hardening            Gemini     P1
+
+Permitir:
+
+sorting
+filtering
+search
+grouping
+
+==================================================
+74. FILTROS
+==================================================
+
+Filtros:
+
+Status
+Provider
+Priority
+Label
+Assignee
+Milestone
+Repository
+Execution State
+
+Quick Filters:
+
+All
+To Do
+Running
+Waiting
+Blocked
+Failed
+Done
+
+==================================================
+75. ISSUE CARD
+==================================================
+
+Cada Issue deve possuir card visual elegante.
+
+Exemplo:
+
+╭──────────────────────────────────────╮
+│ #27                                  │
+│ Certify PostgreSQL-only runtime      │
+│                                      │
+│ ● IN PROGRESS                        │
+│                                      │
+│ Provider                             │
+│ OpenAI Codex                         │
+│                                      │
+│ P0  PostgreSQL  Runtime              │
+│                                      │
+│ Running 18m                          │
+╰──────────────────────────────────────╯
+
+O card deve mudar visualmente conforme o estado.
+
+TODO:
+neutro
+
+IN PROGRESS:
+indicador animado discreto
+
+DONE:
+check
+
+BLOCKED:
+warning
+
+FAILED:
+erro
+
+WAITING FOR QUOTA:
+clock/countdown
+
+==================================================
+76. ISSUE DETAIL PANEL
+==================================================
+
+Ao clicar numa Issue, abrir uma janela/painel detalhado elegante.
+
+Preferencialmente uma sheet/modal/sidebar expansível com animação.
+
+Mostrar:
+
+#27
+Certify PostgreSQL-only application runtime
+
+Status
+IN PROGRESS
+
+Provider
+OpenAI Codex
+
+Execution
+Attempt #2
+
+Elapsed
+00:18:22
+
+GitHub
+OPEN
+
+Branch
+migration/postgresql-finalization
+
+Commit
+pending
+
+Tabs:
+
+Overview
+Execution
+Agent Output
+Git
+GitHub
+Tests
+History
+
+==================================================
+77. OVERVIEW DA ISSUE
+==================================================
+
+Overview:
+
+- Description
+- Acceptance Criteria
+- Labels
+- Priority
+- Provider
+- Queue Position
+- Dependencies
+- Execution Policy
+- GitHub Status
+- AiFlow Status
+
+Markdown rendering seguro.
+
+==================================================
+78. EXECUTION HISTORY
+==================================================
+
+Cada Issue deve manter histórico completo:
+
+Attempt #1
+Codex
+17:25 → 17:38
+WAITING FOR QUOTA
+
+Attempt #2
+Codex
+18:40 → 19:12
+SUCCESS
+
+ou:
+
+Attempt #1
+Claude
+FAILED
+
+Attempt #2
+Gemini
+SUCCESS
+
+Mostrar claramente troca de provider.
+
+==================================================
+79. TIMELINE
+==================================================
+
+Criar timeline visual:
+
+09:40
+Issue added to queue
+
+09:41
+Execution started
+
+09:42
+Codex started
+
+09:58
+Tests started
+
+10:04
+Usage limit reached
+
+10:04
+Waiting for provider
+
+11:37
+Provider available
+
+11:38
+Execution resumed
+
+12:01
+Validation passed
+
+12:02
+Commit created
+
+12:03
+Issue completed
+
+==================================================
+80. DASHBOARD DE GESTÃO
+==================================================
+
+Home deve funcionar como centro de gestão.
+
+Exemplo:
+
+AiFlow
+──────────────────────────────────────────────────
+
+Good morning, André
+
+ACTIVE PROJECT
+
+eNetwork
+
+Progress
+████████████████░░░░ 72%
+
+Done          10
+Running        1
+Todo           4
+Blocked        0
+
+CURRENT EXECUTION
+
+#27 PostgreSQL Runtime
+
+OpenAI Codex
+
+● RUNNING
+
+00:18:42
+
+[ Open Execution ]
+
+──────────────────────────────────────────────────
+
+AI PROVIDERS
+
+Codex
+● Running
+
+Claude
+● Available
+
+Gemini
+● Available
+
+──────────────────────────────────────────────────
+
+NEXT
+
+#28 Regression
+Claude
+
+#29 Security
+Gemini
+
+#30 Backup
+Auto
+
+==================================================
+81. PROGRESSO DO PROJETO
+==================================================
+
+Mostrar progresso baseado na queue.
+
+Exemplo:
+
+Migration to PostgreSQL
+
+10 / 15 completed
+
+67%
+
+Não considerar Issue DONE apenas porque Codex terminou output.
+
+DONE somente após CompletionValidator.
+
+==================================================
+82. SIDEBAR
+==================================================
+
+Sidebar principal:
+
+AiFlow
+
+Home
+
+Workspace
+  Projects
+  Issues
+  Queue
+  Executions
+
+AI
+  Providers
+  Usage
+
+Development
+  Git
+  GitHub
+
+System
+  Logs
+  Settings
+
+Footer:
+
+Codex       ●
+Claude      ●
+Gemini      ●
+
+Avatar
+André
+
+==================================================
+83. FORTE INSPIRAÇÃO NO MACOS 27
+==================================================
+
+A linguagem visual do AiFlow deve ser fortemente inspirada na geração visual moderna do macOS 27.
+
+Quero inspiração abrangente em:
+
+- organização de janelas;
+- profundidade;
+- translucidez;
+- materiais;
+- glass surfaces;
+- sidebars;
+- toolbar;
+- sheets;
+- popovers;
+- context menus;
+- list rows;
+- segmented controls;
+- pills;
+- buttons;
+- cards;
+- search bars;
+- navigation;
+- window transitions;
+- hover states;
+- focus states;
+- modal presentation;
+- typography hierarchy;
+- spacing;
+- rounded geometry.
+
+IMPORTANTE:
+
+não copiar assets proprietários, trademarks ou código da Apple.
+
+Criar uma implementação própria inspirada na mesma linguagem visual.
+
+==================================================
+84. LIQUID GLASS / GLASS MATERIALS
+==================================================
+
+Criar um design system próprio inspirado em glass/liquid materials.
+
+Exemplo:
+
+GlassPrimary
+GlassSecondary
+GlassElevated
+GlassToolbar
+GlassSidebar
+GlassPopover
+
+Cada material deve definir:
+
+background
+backdrop blur
+saturation
+border
+shadow
+highlight
+opacity
+
+Evitar simplesmente:
+
+background: rgba(...)
+
+em todo lado.
+
+Construir um verdadeiro sistema de materiais consistente.
+
+==================================================
+85. ANIMAÇÕES DE JANELAS
+==================================================
+
+Quero animações elegantes inspiradas na experiência de janelas do macOS moderno.
+
+Exemplos:
+
+Abrir modal:
+
+scale
++
+opacity
++
+subtle blur transition
+
+Fechar modal:
+
+reverse animation
+
+Abrir Issue:
+
+card/list row
+→
+expanded sheet
+
+Popover:
+
+scale from anchor
++
+fade
+
+Sidebar:
+
+smooth width transition
+
+Panels:
+
+spring-like motion
+
+Não utilizar animações exageradas.
+
+A sensação deve ser:
+
+fluid
+premium
+physical
+responsive
+
+==================================================
+86. SPRING ANIMATIONS
+==================================================
+
+Utilizar animações baseadas em spring quando apropriado.
+
+Criar tokens:
+
+motion.fast
+motion.normal
+motion.slow
+
+spring.soft
+spring.normal
+spring.snappy
+
+Exemplo conceitual:
+
+duration:
+120–400ms
+
+mas preferir physics/spring para elementos apropriados.
+
+Respeitar:
+
+prefers-reduced-motion.
+
+==================================================
+87. WINDOW / PANEL TRANSITIONS
+==================================================
+
+Animações obrigatórias para:
+
+- abrir Issue;
+- fechar Issue;
+- mudar página;
+- sidebar;
+- modal;
+- dialog;
+- command palette;
+- provider picker;
+- dropdown;
+- queue card reorder;
+- execution panel;
+- notifications;
+- toast;
+- settings sheets.
+
+Evitar animação apenas decorativa.
+
+Cada transição deve ajudar a compreender de onde o elemento veio.
+
+==================================================
+88. BUTTON DESIGN
+==================================================
+
+Botões inspirados na linguagem macOS moderna.
+
+Variants:
+
+Primary
+Secondary
+Ghost
+Glass
+Danger
+Icon
+Toolbar
+
+Estados:
+
+Default
+Hover
+Pressed
+Focused
+Disabled
+Loading
+
+Exemplo:
+
+[ ▶ Start Queue ]
+
+[ Pause ]
+
+[ Retry ]
+
+Ícones + texto quando apropriado.
+
+Usar biblioteca de ícones open-source coerente.
+
+Não copiar SF Symbols proprietários sem licença apropriada.
+
+==================================================
+89. SEGMENTED CONTROLS
+==================================================
+
+Usar segmented controls elegantes para:
+
+Board | List
+
+Formatted | Raw
+
+Overview | Execution | Logs
+
+Light | Dark | System
+
+Com transição suave do indicador selecionado.
+
+==================================================
+90. SEARCH
+==================================================
+
+Search field visualmente inspirado no macOS.
+
+Global search:
+
+⌘ / Ctrl + K
+
+Command Palette.
+
+Permitir procurar:
+
+Issues
+Projects
+Repositories
+Executions
+Providers
+
+==================================================
+91. COMMAND PALETTE
+==================================================
+
+Criar:
+
+Command Palette
+
+Atalho:
+
+Windows:
+Ctrl + K
+
+macOS:
+⌘ K
+
+Ações:
+
+Open Project
+Open Issue
+Start Queue
+Pause Queue
+Retry Execution
+Change Provider
+Open Logs
+Go to Settings
+
+Interface glass com animação elegante.
+
+==================================================
+92. CONTEXT MENUS
+==================================================
+
+Right click / secondary click em Issue:
+
+Run
+Add to Queue
+Remove from Queue
+Change Provider
+Retry
+Pause
+Open on GitHub
+Copy Issue URL
+Mark for Manual Review
+
+Menus devem parecer nativos/premium.
+
+==================================================
+93. DRAG AND DROP
+==================================================
+
+Queue deve possuir drag and drop de alta qualidade.
+
+Durante movimento:
+
+card levanta visualmente
+shadow aumenta
+background muda subtilmente
+outros cards reorganizam suavemente
+
+Persistir nova ordem imediatamente.
+
+==================================================
+94. STATUS ANIMATIONS
+==================================================
+
+RUNNING:
+
+indicador discreto animado.
+
+WAITING:
+
+clock/countdown.
+
+DONE:
+
+check animation curta.
+
+FAILED:
+
+erro sem animação agressiva.
+
+BLOCKED:
+
+warning.
+
+Não usar spinners infinitos em todo lado.
+
+==================================================
+95. PROVIDER VISUAL IDENTITY
+==================================================
+
+Cada provider pode possuir identificação visual subtil:
+
+OpenAI Codex
+Anthropic Claude
+Google Gemini
+
+Mas manter identidade principal AiFlow.
+
+Não transformar UI num festival de cores.
+
+Provider deve ser identificável através de:
+
+nome
+ícone autorizado
+badge
+subtle accent
+
+==================================================
+96. REAL-TIME EVENT BUS
+==================================================
+
+Criar uma arquitetura formal para atualizações em tempo real.
+
+ExecutionEventBus
+
+Eventos:
+
+EXECUTION_STARTED
+PROVIDER_STARTED
+OUTPUT_RECEIVED
+FILE_CHANGED
+COMMAND_STARTED
+COMMAND_FINISHED
+VALIDATION_STARTED
+VALIDATION_FINISHED
+COMMIT_CREATED
+ISSUE_STATE_CHANGED
+QUOTA_REACHED
+QUOTA_AVAILABLE
+PROVIDER_CHANGED
+EXECUTION_COMPLETED
+EXECUTION_FAILED
+
+UI deve reagir a esses eventos.
+
+==================================================
+97. EVENT ORDERING
+==================================================
+
+Todos os eventos devem possuir:
+
+eventId
+executionId
+attemptId
+sequence
+timestamp
+type
+payload
+
+Garantir ordering.
+
+Após crash/restart:
+
+UI deve conseguir reconstruir timeline a partir dos eventos persistidos.
+
+==================================================
+98. GITHUB AUTO-REFRESH
+==================================================
+
+Issues devem atualizar periodicamente.
+
+Também permitir refresh manual.
+
+Quando GitHub Issue mudar externamente:
+
+AiFlow deve refletir mudança.
+
+Evitar chamadas excessivas à API.
+
+Usar:
+
+ETag
+conditional requests
+pagination
+cache
+
+quando aplicável.
+
+==================================================
+99. ISSUE COUNTERS
+==================================================
+
+Sidebar / project:
+
+Issues  15
+
+Todo  4
+Running  1
+Done  10
+
+Badges discretos.
+
+==================================================
+100. MULTI-PROJECT
+==================================================
+
+Preparar UI para vários projetos.
+
+Exemplo:
+
+eNetwork
+10/15
+
+eProduction
+4/18
+
+Infrastructure
+7/9
+
+Cada projeto possui:
+
+repository
+worktree
+queue
+provider policy
+execution history
+
+==================================================
+101. EXECUTION MINI PLAYER
+==================================================
+
+Quando eu sair da Execution page, a execução atual deve continuar visível.
+
+Criar um mini execution player no rodapé/topbar:
+
+● #27 PostgreSQL runtime
+
+Codex
+
+00:18:44
+
+[ Open ]
+
+Ao clicar:
+
+abre Execution Center.
+
+==================================================
+102. QUOTA COUNTDOWN NA INTERFACE
+==================================================
+
+Se provider atingir limite:
+
+Mini Player:
+
+Codex
+Waiting for quota
+
+01:32:14
+
+Provider Dashboard:
+
+OpenAI Codex
+
+LIMITED
+
+Available in
+
+01:32:14
+
+Issue Card:
+
+#27
+
+WAITING FOR CODEX
+
+01:32:14
+
+Todos usam a mesma fonte de estado.
+
+Não implementar três timers independentes.
+
+==================================================
+103. PERFORMANCE DA INTERFACE
+==================================================
+
+Logs em tempo real podem conter milhares de linhas.
+
+Utilizar virtualização.
+
+Não renderizar 100.000 elementos React simultaneamente.
+
+Lista de Issues também deve utilizar virtualização quando necessário.
+
+Evitar re-render completo da aplicação a cada linha de stdout.
+
+Batch/debounce apenas da renderização, nunca perder eventos.
+
+==================================================
+104. RESPONSIVIDADE DA JANELA
+==================================================
+
+Suportar:
+
+janela grande
+janela média
+janela compacta
+
+Exemplo:
+
+grande:
+sidebar + content + detail panel
+
+média:
+sidebar + content
+
+compacta:
+sidebar colapsável
+
+Definir tamanho mínimo de janela apropriado.
+
+==================================================
+105. TITLEBAR
+==================================================
+
+No macOS:
+
+integrar visualmente conteúdo com titlebar quando Tauri permitir de forma estável e segura.
+
+No Windows:
+
+criar aparência coerente sem comprometer:
+
+window controls
+drag regions
+accessibility
+
+Os botões nativos de fechar/minimizar/maximizar devem continuar funcionais e previsíveis.
+
+==================================================
+106. THEME ENGINE
+==================================================
+
+Themes:
+
+System
+Light
+Dark
+
+Preparar:
+
+OLED Dark
+
+como opção futura.
+
+Translucidez deve adaptar-se ao fundo.
+
+Se sistema não suportar determinado blur:
+
+fallback elegante.
+
+==================================================
+107. WALLPAPER / BACKDROP ADAPTATION
+==================================================
+
+Glass surfaces devem responder bem a diferentes backgrounds.
+
+Não depender de um wallpaper específico.
+
+Criar fundos próprios subtis para as páginas quando necessário.
+
+==================================================
+108. ACCESSIBILITY
+==================================================
+
+Mesmo com forte inspiração visual, acessibilidade é obrigatória.
+
+Suportar:
+
+keyboard navigation
+screen reader labels
+high contrast
+reduced transparency
+reduced motion
+focus indicators
+adequate contrast ratios
+
+Se:
+
+Reduce Transparency
+
+estiver ativo no sistema e for detectável:
+
+diminuir/retirar blur.
+
+==================================================
+109. ISSUE COMPLETION ANIMATION
+==================================================
+
+Quando uma Issue passa realmente pelo CompletionValidator:
+
+IN PROGRESS
+→
+DONE
+
+Mostrar animação curta.
+
+Exemplo:
+
+running indicator
+→
+check
+
+card move suavemente:
+
+IN PROGRESS
+→
+DONE
+
+no Board.
+
+Depois selecionar próxima tarefa.
+
+==================================================
+110. TRANSIÇÃO PARA PRÓXIMA ISSUE
+==================================================
+
+Quando Issue termina:
+
+✓ #27 completed
+
+mostrar por alguns segundos:
+
+Next
+
+#28
+Full regression and concurrency certification
+
+Provider
+Claude
+
+Starting...
+
+Depois iniciar automaticamente.
+
+Essa transição deve ser clara para o utilizador.
+
+==================================================
+111. BLOCKED EXPERIENCE
+==================================================
+
+Se Issue estiver BLOCKED:
+
+mostrar claramente:
+
+BLOCKED
+
+Reason
+
+...
+
+Required Action
+
+...
+
+[ Review ]
+[ Retry ]
+[ Skip ]
+
+Nunca deixar queue silenciosamente parada sem informar o motivo.
+
+==================================================
+112. FAILED EXPERIENCE
+==================================================
+
+FAILED deve mostrar:
+
+provider
+attempt
+exit code
+classification
+last output
+log link
+
+Ações:
+
+Retry Same Provider
+Change Provider
+Open Logs
+Manual Review
+
+==================================================
+113. TODO EXPERIENCE
+==================================================
+
+TODO deve deixar claro:
+
+queue position
+provider
+dependencies
+policy
+manual approval requirement
+
+Exemplo:
+
+#31 Production Cutover
+
+TODO
+
+Position
+5
+
+Provider
+Codex
+
+⚠ Manual approval required
+
+==================================================
+114. DONE EXPERIENCE
+==================================================
+
+DONE:
+
+completed_at
+provider
+duration
+attempts
+commit
+GitHub status
+CI status
+
+Exemplo:
+
+✓ DONE
+
+Completed in
+34m 17s
+
+Provider
+Codex
+
+Commit
+4d7dbe3
+
+Tests
+287 passed
+
+GitHub
+Closed
+
+==================================================
+115. COMPLETE VISUAL MANAGEMENT
+==================================================
+
+O AiFlow deve funcionar também como ferramenta de gestão visual do trabalho.
+
+Não é apenas launcher de agentes.
+
+Quero conseguir abrir o AiFlow e compreender imediatamente:
+
+- o que já terminou;
+- o que está executando;
+- o que vem depois;
+- quem/provider está executando;
+- quanto tempo está demorando;
+- se existe erro;
+- se existe quota;
+- se existe blocker;
+- quais Issues faltam;
+- qual progresso do projeto;
+- quais commits foram produzidos;
+- quais testes passaram;
+- qual tarefa necessita de atenção humana.
+
+==================================================
+116. NÃO DEPENDER DO TERMINAL
+==================================================
+
+Depois de o AiFlow estar funcional, um utilizador comum não deve precisar manter PowerShell/Terminal aberto para acompanhar o trabalho.
+
+Os processos devem ser filhos/controlados pelo backend desktop.
+
+O output é apresentado no AiFlow.
+
+O terminal permanece disponível apenas para:
+
+advanced diagnostics
+
+e não como requisito de utilização normal.
+
+==================================================
+117. UX QUALITY BAR
+==================================================
+
+A qualidade visual não é secundária.
+
+Não aceitar como final:
+
+- Bootstrap-like dashboard;
+- Material UI genérico;
+- cards genéricos;
+- tabelas sem refinamento;
+- modals web tradicionais;
+- animações pobres;
+- componentes visualmente inconsistentes.
+
+Criar um design system AiFlow próprio, inspirado fortemente na linguagem visual desktop moderna do macOS 27.
+
+A interface deve parecer um produto premium real.
+
+==================================================
+118. COMPONENT LIBRARY
+==================================================
+
+Criar componentes reutilizáveis próprios:
+
+AiWindow
+AiSidebar
+AiToolbar
+AiGlassPanel
+AiSheet
+AiPopover
+AiContextMenu
+AiButton
+AiIconButton
+AiSegmentedControl
+AiSearchField
+AiIssueRow
+AiIssueCard
+AiStatusBadge
+AiProviderBadge
+AiQueueItem
+AiExecutionConsole
+AiTimeline
+AiProgressRing
+AiCountdown
+AiCommandPalette
+AiToast
+AiDialog
+AiTabs
+AiSplitView
+
+Centralizar comportamento visual.
+
+Não duplicar CSS.
+
+==================================================
+119. DESIGN TOKENS
+==================================================
+
+Criar tokens:
+
+color
+material
+surface
+border
+radius
+blur
+shadow
+spacing
+font
+fontSize
+fontWeight
+motion
+spring
+zIndex
+
+Não espalhar valores arbitrários por componentes.
+
+==================================================
+120. PRIMEIRO PROTÓTIPO VISUAL FUNCIONAL
+==================================================
+
+A primeira versão funcional deve apresentar pelo menos:
+
+Sidebar
+
+Home
+Projects
+Issues
+Queue
+Executions
+Providers
+Logs
+Settings
+
+Project:
+eNetwork
+
+Issues:
+
+DONE
+#2 Gmail ingestion
+
+DONE
+#3 ePredit
+
+DONE
+#4 Jobs
+
+DONE
+#5 SQLite inventory
+
+DONE
+#6 Zero SQLite runtime
+
+IN PROGRESS
+#7 PostgreSQL-only runtime
+
+TODO
+#8 Regression
+
+TODO
+#9 Security
+
+Ao clicar #7:
+
+abrir painel animado.
+
+Mostrar:
+
+Provider
+OpenAI Codex
+
+State
+RUNNING
+
+Live Agent Output
+
+e o output real em streaming.
+
+==================================================
+121. IMPLEMENTAÇÃO, NÃO MOCK
+==================================================
+
+É permitido usar mock data apenas na fase visual inicial.
+
+Porém a funcionalidade não pode ser considerada concluída enquanto:
+
+- Issues não vierem realmente do GitHub;
+- provider status não vier realmente do adapter;
+- output não vier realmente do processo;
+- estado não for persistido;
+- queue não controlar realmente execução;
+- completion não for realmente validado.
+
+No IMPLEMENTATION_STATUS distinguir:
+
+UI MOCK
+UI CONNECTED
+BACKEND READY
+INTEGRATION VALIDATED
+
+==================================================
+122. TESTES DE STREAMING
+==================================================
+
+Criar testes para output em tempo real.
+
+Fake provider deve produzir:
+
+line 1
+delay
+line 2
+delay
+stderr
+delay
+line 3
+
+Teste deve provar que:
+
+line 1 chega à UI/event bus antes do processo terminar.
+
+Não aceitar implementação que apenas retorna stdout completo no final.
+
+==================================================
+123. TESTES DE ISSUE STATE
+==================================================
+
+Testar:
+
+TODO
+→ IN_PROGRESS
+→ DONE
+
+TODO
+→ IN_PROGRESS
+→ WAITING_FOR_QUOTA
+→ IN_PROGRESS
+→ DONE
+
+TODO
+→ IN_PROGRESS
+→ FAILED
+→ IN_PROGRESS
+→ DONE
+
+TODO
+→ IN_PROGRESS
+→ BLOCKED
+
+Garantir persistência após restart.
+
+==================================================
+124. TESTES DE GITHUB SYNC
+==================================================
+
+Testar:
+
+GitHub OPEN + AiFlow TODO
+
+GitHub OPEN + AiFlow IN_PROGRESS
+
+GitHub CLOSED + AiFlow DONE
+
+mudança externa:
+
+OPEN
+→ CLOSED
+
+refresh AiFlow
+
+AiFlow deve reconciliar sem perder execution history.
+
+==================================================
+125. CRITÉRIO VISUAL DE ACEITAÇÃO
+==================================================
+
+Antes de considerar a UI concluída:
+
+validar visualmente:
+
+Home
+Issues Board
+Issues List
+Queue
+Execution Center
+Provider Dashboard
+Issue Detail
+Settings
+Dark Mode
+Light Mode
+
+Validar também animações e estados:
+
+TODO
+RUNNING
+WAITING
+BLOCKED
+FAILED
+DONE
+
+Não considerar UI pronta apenas porque componentes renderizam.
+
+==================================================
+126. REGRA FINAL DE PRODUTO
+==================================================
+
+O AiFlow deve parecer a combinação de:
+
+uma aplicação desktop premium
++
+um gestor visual de desenvolvimento
++
+um GitHub Issue manager
++
+um execution orchestrator
++
+um live console para agentes de IA.
+
+Não deve parecer:
+
+"um script PowerShell com uma interface por cima."
+
+Toda a arquitetura e UX devem refletir essa diferença.
+
+O utilizador deve conseguir gerir todo o ciclo visualmente:
+
+GitHub Issue
+→
+TODO
+→
+Queue
+→
+IN PROGRESS
+→
+Live Agent Output
+→
+Tests
+→
+Commit
+→
+Validation
+→
+DONE
+→
+Next Issue
+
+sem sair do AiFlow.
