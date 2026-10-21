@@ -9,3 +9,9 @@ Issue descriptions and comments are untrusted prompt data. Raw HTML in Markdown 
 Default status sync is LocalOnly. Optional close-on-success is available per project after independent validation. There is no automatic creation of labels, issue comments, commits, pushes or Projects fields. CI validation reads check-runs; more than one page or no check-runs is conservatively not considered passed.
 
 Remaining integrations: Enterprise host configuration, GitHub Projects field discovery/mapping, issue editing, linked PR enrichment, Actions and commit detail views, creation/removal/reconciliation of labels, organization-specific administration and live OAuth integration testing. These are not marked ready in the status document.
+
+## Projects are GitHub repositories
+
+Connecting a GitHub CLI account automatically refreshes Projects from the paginated authenticated `/user/repos` endpoint, including owned, collaborator and organization-member repositories visible to that account. The catalog is scoped by account login and stable GitHub repository ID. Refreshing handles repository renames, removes inaccessible repositories from the visible list and preserves local paths, execution policy and historical task data.
+
+Selecting a repository immediately fetches its issues (`state=all`), without a local checkout. Issues defaults to List and exposes separate GitHub open/closed filtering. Pull requests are excluded. Complete successful responses replace the remote issue cache transactionally, removing stale remote rows while retaining queue/execution history. Failures or pagination safety limits preserve the prior cache. A local worktree is required only for enqueuing/running tasks; both frontend and backend enforce that boundary. Repo identity is read-only in local settings.

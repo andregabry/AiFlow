@@ -1,0 +1,159 @@
+import { test, expect } from "@playwright/test";
+
+test("Projects lists GitHub repositories and selecting one loads its issues without a local folder", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      isTauri: boolean;
+      __TAURI_INTERNALS__: unknown;
+      __TAURI_EVENT_PLUGIN_INTERNALS__: unknown;
+      issueRequests: string[];
+    };
+    w.isTauri = true;
+    w.issueRequests = [];
+    localStorage.clear();
+    localStorage.setItem("aiflow.theme", "Dark");
+    const policy = {
+      allowedProviders: ["codex"],
+      defaultProvider: "codex",
+      failover: "ask",
+      requireCleanTree: true,
+      requireCommit: true,
+      requireTests: true,
+      requireCI: false,
+      closeIssue: false,
+      manualApprovalLabels: [],
+      testCommands: [],
+      maxRetries: 3,
+    };
+    const repos = [
+      {
+        id: "repo-library",
+        name: "sample/library",
+        repository: "sample/library",
+        path: "",
+        branch: "main",
+        policy,
+      },
+      {
+        id: "repo-tools",
+        name: "sample/tools",
+        repository: "sample/tools",
+        path: "",
+        branch: "main",
+        policy,
+      },
+    ];
+    let projects: typeof repos = [];
+    const issue = (number: number, title: string, state = "OPEN") => ({
+      number,
+      title,
+      state,
+      body: "GitHub issue content",
+      labels: [],
+      assignees: [],
+      milestone: null,
+      url: `https://github.com/sample/tools/issues/${number}`,
+      updatedAt: new Date().toISOString(),
+      comments: [],
+    });
+    const issues = new Map<string, ReturnType<typeof issue>[]>();
+    w.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener: () => undefined,
+    };
+    w.__TAURI_INTERNALS__ = {
+      transformCallback: () => 1,
+      unregisterCallback: () => undefined,
+      invoke: async (command: string, args: Record<string, unknown>) => {
+        if (command === "plugin:event|listen") return 1;
+        if (command === "plugin:event|unlisten") return;
+        if (command === "snapshot")
+          return {
+            projects,
+            issues: [...issues].map(([projectId, issues]) => ({
+              projectId,
+              issues,
+            })),
+            queue: [],
+            executions: [],
+            providers: [],
+            usage: [],
+            runningProjects: [],
+            githubAccount: "sample",
+          };
+        if (command === "sync_repositories") {
+          projects = repos;
+          return repos.length;
+        }
+        if (command === "sync_issues") {
+          const id = String(args.projectId);
+          w.issueRequests.push(id);
+          issues.set(
+            id,
+            id === "repo-tools"
+              ? [
+                  issue(201, "Open tools issue"),
+                  issue(202, "Closed tools issue", "CLOSED"),
+                ]
+              : [issue(101, "Library issue")],
+          );
+          return issues.get(id)?.length;
+        }
+        throw new Error(`Unexpected repository IPC: ${command}`);
+      },
+    };
+  });
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Projects", exact: true })
+    .click();
+  await expect(page.locator(".project-card")).toHaveCount(2);
+  await expect(
+    page.getByRole("heading", { name: "sample/tools", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "New project", exact: true }),
+  ).toHaveCount(0);
+  await page
+    .locator(".project-card")
+    .filter({
+      has: page.getByRole("heading", { name: "sample/tools", exact: true }),
+    })
+    .click();
+  await expect(page.locator(".page-top h1")).toHaveText("Issues");
+  await expect(page.locator(".issue-table-row")).toHaveCount(2);
+  await expect(page.getByText("Library issue", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Link local folder", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { issueRequests: string[] }).issueRequests,
+    ),
+  ).toContain("repo-tools");
+  await page.getByLabel("GitHub issue state").selectOption("CLOSED");
+  await expect(page.locator(".issue-table-row")).toHaveCount(1);
+  await expect(page.locator(".issue-table-row")).toContainText(
+    "Closed tools issue",
+  );
+  await page.getByLabel("GitHub issue state").selectOption("OPEN");
+  await page.locator(".issue-table-row").click();
+  await expect(page.getByRole("dialog", { name: "Issue #201" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Add to queue", exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await page
+    .getByRole("button", { name: "Link local folder", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Project settings" }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("GitHub repository", { exact: false }).first(),
+  ).toHaveValue("sample/tools");
+  await page.keyboard.press("Escape");
+  await page.screenshot({ path: "test-results/github-repository-issues.png" });
+});

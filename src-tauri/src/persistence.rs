@@ -39,6 +39,146 @@ impl Store {
     pub fn projects(&self) -> Result<Vec<Project>> {
         self.json_rows("SELECT data FROM projects", [])
     }
+    pub fn account_projects(&self, account: &str) -> Result<Vec<Project>> {
+        self.json_rows("SELECT p.data FROM projects p JOIN github_repository_catalog c ON c.project_id=p.id WHERE c.account=? ORDER BY c.repository COLLATE NOCASE", [account])
+    }
+    pub fn sync_repository_catalog(
+        &self,
+        account: &str,
+        repositories: &[serde_json::Value],
+    ) -> Result<usize> {
+        let c = self.0.lock().map_err(|e| e.to_string())?;
+        let mut parsed = vec![];
+        let mut seen = std::collections::HashSet::new();
+        for repo in repositories {
+            let repository = repo["fullName"]
+                .as_str()
+                .filter(|s| crate::security::safe_repository(s))
+                .ok_or("Invalid GitHub repository response")?;
+            let repository_id = repo["id"]
+                .as_u64()
+                .ok_or("Missing stable GitHub repository ID")?
+                .to_string();
+            if !seen.insert(repository_id.clone()) {
+                return Err("Duplicate repository ID in GitHub response".into());
+            }
+            parsed.push((repo, repository, repository_id));
+        }
+        c.execute_batch("BEGIN IMMEDIATE")
+            .map_err(|e| e.to_string())?;
+        let result = (|| -> Result<()> {
+            let projects: Vec<Project> = {
+                let mut stmt = c
+                    .prepare("SELECT data FROM projects")
+                    .map_err(|e| e.to_string())?;
+                let rows = stmt
+                    .query_map([], |r| r.get::<_, String>(0))
+                    .map_err(|e| e.to_string())?
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .map_err(|e| e.to_string())?;
+                rows.iter()
+                    .map(|s| serde_json::from_str(s).map_err(|e| e.to_string()))
+                    .collect::<Result<Vec<_>>>()?
+            };
+            let mappings: std::collections::HashMap<String, String> = {
+                let mut stmt=c.prepare("SELECT repository_id,project_id FROM github_repository_catalog WHERE account=?").map_err(|e|e.to_string())?;
+                let rows = stmt
+                    .query_map([account], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .map_err(|e| e.to_string())?
+                    .collect::<std::result::Result<_, _>>()
+                    .map_err(|e| e.to_string())?;
+                rows
+            };
+            c.execute(
+                "DELETE FROM github_repository_catalog WHERE account=?",
+                [account],
+            )
+            .map_err(|e| e.to_string())?;
+            for (repo, repository, repository_id) in &parsed {
+                let mut project = projects
+                    .iter()
+                    .find(|p| mappings.get(repository_id) == Some(&p.id))
+                    .or_else(|| {
+                        projects
+                            .iter()
+                            .find(|p| p.repository.eq_ignore_ascii_case(repository))
+                    })
+                    .cloned()
+                    .unwrap_or_else(|| Project {
+                        id: id(),
+                        name: repository.to_string(),
+                        repository: repository.to_string(),
+                        path: String::new(),
+                        branch: String::new(),
+                        policy: ProjectPolicy::default(),
+                    });
+                project.name = repository.to_string();
+                project.repository = repository.to_string();
+                if project.path.is_empty() {
+                    project.branch = repo["defaultBranch"].as_str().unwrap_or("main").into();
+                }
+                c.execute(
+                    "INSERT OR REPLACE INTO projects VALUES(?,?)",
+                    params![
+                        project.id,
+                        serde_json::to_string(&project).map_err(|e| e.to_string())?
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+                c.execute(
+                    "INSERT OR IGNORE INTO queues(project_id) VALUES(?)",
+                    [&project.id],
+                )
+                .map_err(|e| e.to_string())?;
+                c.execute(
+                    "INSERT INTO github_repository_catalog VALUES(?,?,?,?,?)",
+                    params![
+                        account,
+                        repository_id,
+                        project.id,
+                        repository,
+                        repo.to_string()
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        })();
+        if result.is_ok() {
+            c.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+        } else {
+            let _ = c.execute_batch("ROLLBACK");
+        }
+        result?;
+        Ok(parsed.len())
+    }
+    pub fn replace_remote_issues(&self, project_id: &str, issues: &[Issue]) -> Result<()> {
+        let c = self.0.lock().map_err(|e| e.to_string())?;
+        c.execute_batch("BEGIN IMMEDIATE")
+            .map_err(|e| e.to_string())?;
+        let result = (|| -> Result<()> {
+            c.execute("DELETE FROM issues_cache WHERE project_id=?", [project_id])
+                .map_err(|e| e.to_string())?;
+            for issue in issues {
+                c.execute(
+                    "INSERT INTO issues_cache VALUES(?,?,?)",
+                    params![
+                        project_id,
+                        issue.number as i64,
+                        serde_json::to_string(issue).map_err(|e| e.to_string())?
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        })();
+        if result.is_ok() {
+            c.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+        } else {
+            let _ = c.execute_batch("ROLLBACK");
+        }
+        result
+    }
     pub fn project(&self, id: &str) -> Result<Project> {
         self.json_rows("SELECT data FROM projects WHERE id=?", [id])?
             .pop()
@@ -348,5 +488,83 @@ mod tests {
         drop(store);
         let store = Store::open(&path).unwrap();
         assert_eq!(store.usage().unwrap().len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn github_catalog_is_account_scoped_and_preserves_local_worktree_settings() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("catalog.db")).unwrap();
+        let first = json!({"id":11,"fullName":"sample/library","defaultBranch":"main"});
+        let second = json!({"id":12,"fullName":"sample/tools","defaultBranch":"main"});
+        store
+            .sync_repository_catalog("sample", &[first.clone(), second])
+            .unwrap();
+        let projects = store.account_projects("sample").unwrap();
+        assert_eq!(projects.len(), 2);
+        assert!(projects.iter().all(|p| p.path.is_empty()));
+        let mut linked = projects[0].clone();
+        linked.path = "/local/worktree".into();
+        linked.branch = "work/custom".into();
+        linked.policy.require_tests = false;
+        store.save_project(&linked).unwrap();
+        let renamed = json!({"id":11,"fullName":"sample/renamed-library","defaultBranch":"trunk"});
+        store.sync_repository_catalog("sample", &[renamed]).unwrap();
+        let current = store.account_projects("sample").unwrap();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].id, linked.id);
+        assert_eq!(current[0].repository, "sample/renamed-library");
+        assert_eq!(current[0].path, linked.path);
+        assert_eq!(current[0].branch, "work/custom");
+        assert!(!current[0].policy.require_tests);
+        assert!(
+            store.project(&projects[1].id).is_ok(),
+            "Removed access must not delete local history"
+        );
+        assert!(store.account_projects("another").unwrap().is_empty());
+        store
+            .sync_repository_catalog(
+                "another",
+                &[json!({"id":99,"fullName":"another/private","defaultBranch":"main"})],
+            )
+            .unwrap();
+        assert_eq!(store.account_projects("another").unwrap().len(), 1);
+        assert_eq!(
+            store.account_projects("sample").unwrap()[0].repository,
+            "sample/renamed-library"
+        );
+        assert!(store
+            .sync_repository_catalog(
+                "sample",
+                &[json!({"id":11,"fullName":"invalid/path/extra"})]
+            )
+            .is_err());
+        assert_eq!(
+            store.account_projects("sample").unwrap().len(),
+            1,
+            "Incomplete responses must preserve the previous view"
+        );
+    }
+    #[test]
+    fn remote_issue_replacement_removes_stale_rows_without_deleting_queue_history() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("issues.db")).unwrap();
+        let issue = |number, title: &str| {
+            serde_json::from_value::<Issue>(json!({"number":number,"title":title,"body":"","state":"OPEN","labels":[],"assignees":[],"milestone":null,"url":"https://github.com/sample/library/issues/1","updatedAt":"2026-10-21T00:00:00Z","comments":[]})).unwrap()
+        };
+        store
+            .replace_remote_issues("repo", &[issue(1, "old"), issue(2, "before")])
+            .unwrap();
+        store.sql("INSERT INTO queue_items(id,project_id,issue_number,provider_id,position,state) VALUES('task','repo',1,'codex',1,'FAILED')",[]).unwrap();
+        store
+            .replace_remote_issues("repo", &[issue(2, "updated")])
+            .unwrap();
+        assert_eq!(store.issues("repo").unwrap().len(), 1);
+        assert_eq!(store.issues("repo").unwrap()[0].title, "updated");
+        assert_eq!(store.queue().unwrap()[0].state, "FAILED");
     }
 }

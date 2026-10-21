@@ -54,7 +54,11 @@ impl AppState {
 }
 #[tauri::command]
 async fn snapshot(state: tauri::State<'_, Arc<AppState>>) -> Result<Snapshot> {
-    let projects = state.store.projects()?;
+    let github_account = state.github.account().await;
+    let projects = match &github_account {
+        Some(account) => state.store.account_projects(account)?,
+        None => vec![],
+    };
     let issues = projects
         .iter()
         .map(|p| {
@@ -70,7 +74,6 @@ async fn snapshot(state: tauri::State<'_, Arc<AppState>>) -> Result<Snapshot> {
             .query("SELECT project_id FROM queues WHERE running=1", [], |r| {
                 r.get(0)
             })?;
-    let github_account = state.github.account().await;
     Ok(Snapshot {
         projects,
         issues,
@@ -102,6 +105,13 @@ async fn save_project(
 ) -> Result<Project> {
     if !security::safe_repository(&project.repository) {
         return Err("Repository must be owner/name".into());
+    }
+    if !project.id.is_empty() && state.store.project(&project.id)?.repository != project.repository
+    {
+        return Err(
+            "Select the repository from Projects; local settings cannot change its GitHub identity"
+                .into(),
+        );
     }
     if project.name.trim().is_empty() {
         return Err("Project name is required".into());
@@ -378,6 +388,21 @@ fn github_device_cancel(state: tauri::State<'_, Arc<AppState>>) -> Result<()> {
     state.github.device_cancel()
 }
 #[tauri::command]
+async fn sync_repositories(state: tauri::State<'_, Arc<AppState>>) -> Result<usize> {
+    let account = state
+        .github
+        .account()
+        .await
+        .ok_or("Connect your official GitHub CLI account in Accounts first")?;
+    let repositories = state.github.repositories().await?;
+    let rows = repositories
+        .as_array()
+        .ok_or("Invalid GitHub repository list")?;
+    let count = state.store.sync_repository_catalog(&account, rows)?;
+    state.changed();
+    Ok(count)
+}
+#[tauri::command]
 async fn github_repositories(state: tauri::State<'_, Arc<AppState>>) -> Result<Value> {
     state.github.repositories().await
 }
@@ -402,6 +427,11 @@ fn enqueue(
     provider_id: String,
 ) -> Result<()> {
     let p = state.store.project(&project_id)?;
+    if p.path.trim().is_empty() {
+        return Err(
+            "Link a local worktree in repository settings before adding execution tasks".into(),
+        );
+    }
     state.providers.select(&provider_id, &p.policy)?;
     let i = state
         .store
@@ -835,6 +865,7 @@ pub fn run() {
             github_device_poll,
             github_device_cancel,
             cancel_account_connection,
+            sync_repositories,
             github_repositories,
             github_logout,
             sync_issues,

@@ -17,7 +17,7 @@ Requires Node.js, Git, Rust stable with the platform toolchain, and the [Tauri p
 
 1. Open **Accounts → Connect GitHub**. AiFlow verifies and reuses your existing official GitHub CLI account first. If sign-in is needed, it launches `gh auth login`, displays the real code without a terminal and opens the GitHub authorization window. No AiFlow OAuth App, developer account or manual token is required. All GitHub operations use `gh api`; credentials stay with GitHub CLI.
 2. Install any desired official provider CLI separately. AiFlow does not install providers. Existing official CLI authentication can be reused. **Providers → Scan** probes installed versions and capabilities.
-3. Add a project, choose `owner/repository`, and select an existing Git worktree root. Detached HEAD and subdirectory selections are rejected. Set a concrete default provider and allowed providers.
+3. **Projects** automatically lists the repositories accessible to your connected GitHub account. Select one to load its open and closed **Issues**, without creating a local project or linking a folder. Use Sync repositories / Sync issues to refresh. Before running tasks, use **Link local folder** to associate an existing Git worktree and configure its provider/policy. Detached HEAD and subdirectory selections are rejected.
 4. Configure independent validation as argument arrays, e.g. `[["npm","test"],["npm","run","build"]]`. These are trusted project configuration; issues cannot define commands or policy.
 5. Sync issues. Open an issue, select its provider and **Add to queue**. **Dry run** checks Git, probes the provider and shows the prompt without launching an agent or modifying GitHub.
 6. Start the queue. Follow stdout/stderr and validation in **Execution Center**. Completed means the backend validator passed, not merely that the CLI said “done”.
@@ -71,4 +71,4 @@ Read [architecture](docs/ARCHITECTURE.md), [security](docs/SECURITY.md), [Window
 
 Source is published at [andregabry/AiFlow](https://github.com/andregabry/AiFlow). The [validation workflow](https://github.com/andregabry/AiFlow/actions/workflows/validate.yml) checks and packages Windows and macOS. Completed successful runs expose unsigned installer artifacts on their run page; source publication alone does not certify either platform or the live account integrations.
 
-Local verification on 2026-10-21 passed 25 Rust, 14 TypeScript and 10 browser tests, plus lint, formatting, Clippy and the Windows installer build. New Claude/Gemini account logins and macOS runtime behavior still require live validation.
+Local verification on 2026-10-21 passed 27 Rust, 14 TypeScript and 11 browser tests, plus lint, formatting, Clippy and the Windows installer build. New Claude/Gemini account logins and macOS runtime behavior still require live validation.

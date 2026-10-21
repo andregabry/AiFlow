@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Home,
@@ -140,6 +140,8 @@ export default function App() {
     localStorage.getItem("aiflow.theme") ?? "System",
   );
   const [sidebar, setSidebar] = useState(false);
+  const [repositorySearch, setRepositorySearch] = useState("");
+  const syncedAccount = useRef<string | undefined>(undefined);
   const project = data.projects.find((p) => p.id === projectId);
   const issues =
     data.issues.find((p) => p.projectId === projectId)?.issues ?? [];
@@ -203,7 +205,20 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [notice]);
   useEffect(() => {
+    if (!desktop || !data.githubAccount) {
+      syncedAccount.current = undefined;
+      return;
+    }
+    if (syncedAccount.current === data.githubAccount) return;
+    syncedAccount.current = data.githubAccount;
+    void useApp.getState().command("sync_repositories");
+  }, [data.githubAccount]);
+  useEffect(() => {
+    setSelected(null);
+  }, [projectId]);
+  useEffect(() => {
     if (!desktop || !projectId || !data.githubAccount) return;
+    void useApp.getState().command("sync_issues", { projectId });
     const timer = setInterval(() => {
       void useApp.getState().command("sync_issues", { projectId });
     }, 120000);
@@ -221,10 +236,7 @@ export default function App() {
   };
   const control = (action: string) =>
     void useApp.getState().command("queue_control", { projectId, action });
-  const addProject = () => {
-    setEditProject(undefined);
-    setProjectSheet(true);
-  };
+  const addProject = () => go("Projects");
   const openExecution = (e?: Execution) => {
     if (e) setSelectedExecutionId(e.id);
     go("Executions");
@@ -404,9 +416,25 @@ export default function App() {
                 </div>
                 <div className="page-actions">
                   {["Home", "Projects"].includes(page) && (
-                    <AiButton onClick={addProject}>
-                      <Plus size={15} />
-                      New project
+                    <AiButton
+                      disabled={loading || !data.githubAccount}
+                      onClick={() =>
+                        void useApp.getState().command("sync_repositories")
+                      }
+                    >
+                      <RefreshCw size={15} />
+                      Sync repositories
+                    </AiButton>
+                  )}
+                  {["Projects", "Issues"].includes(page) && project && (
+                    <AiButton
+                      onClick={() => {
+                        setEditProject(project);
+                        setProjectSheet(true);
+                      }}
+                    >
+                      <Settings2 size={14} />
+                      {project.path ? "Local settings" : "Link local folder"}
                     </AiButton>
                   )}
                   {["Issues", "Queue"].includes(page) && project && (
@@ -424,7 +452,7 @@ export default function App() {
                       </AiButton>
                       <AiButton
                         variant="primary"
-                        disabled={loading || !queue.length}
+                        disabled={loading || !queue.length || !project.path}
                         onClick={() => control("start")}
                       >
                         <Play size={13} />
@@ -457,40 +485,91 @@ export default function App() {
                 />
               )}
               {page === "Projects" && (
-                <div className="project-grid">
-                  {data.projects.map((p) => (
-                    <button
-                      key={p.id}
-                      className={`project-card glass ${p.id === projectId ? "chosen" : ""}`}
-                      onClick={() => {
-                        useApp.getState().selectProject(p.id);
-                        go("Issues");
-                      }}
-                    >
-                      <div className="project-card-icon">
-                        <FolderGit2 size={23} />
+                <>
+                  {!data.githubAccount ? (
+                    <Empty title="Your GitHub repositories">
+                      <p>
+                        Connect GitHub to list the repositories available to
+                        your account.
+                      </p>
+                      <AiButton
+                        variant="primary"
+                        onClick={() => go("Accounts")}
+                      >
+                        Connect GitHub
+                      </AiButton>
+                    </Empty>
+                  ) : (
+                    <>
+                      <div className="issues-subtools">
+                        <label className="search-field">
+                          <Search size={14} />
+                          <input
+                            aria-label="Search repositories"
+                            placeholder="Search GitHub repositories…"
+                            value={repositorySearch}
+                            onChange={(e) =>
+                              setRepositorySearch(e.target.value)
+                            }
+                          />
+                        </label>
+                        <span>
+                          {data.projects.length} repositories ·{" "}
+                          {data.githubAccount}
+                        </span>
                       </div>
-                      <h2>{p.name}</h2>
-                      <p>{p.repository}</p>
-                      <span>
-                        <GitBranch size={13} />
-                        {p.branch}
-                      </span>
-                      <footer>
-                        <AiProviderBadge id={p.policy.defaultProvider} />
-                        <ArrowUpRight size={17} />
-                      </footer>
-                    </button>
-                  ))}
-                  <button className="project-add" onClick={addProject}>
-                    <Plus size={24} />
-                    <strong>Add a project</strong>
-                    <span>Connect a repository and worktree</span>
-                  </button>
-                </div>
+                      {loading && !data.projects.length && (
+                        <p role="status">Loading GitHub repositories…</p>
+                      )}
+                      {!loading && !data.projects.length && (
+                        <Empty title="No repositories to display">
+                          Sync repositories to refresh the repositories
+                          accessible to this GitHub account.
+                        </Empty>
+                      )}
+                      <div className="project-grid">
+                        {data.projects
+                          .filter((p) =>
+                            p.repository
+                              .toLowerCase()
+                              .includes(repositorySearch.toLowerCase()),
+                          )
+                          .map((p) => (
+                            <button
+                              key={p.id}
+                              className={`project-card glass ${p.id === projectId ? "chosen" : ""}`}
+                              onClick={() => {
+                                useApp.getState().selectProject(p.id);
+                                go("Issues");
+                              }}
+                            >
+                              <div className="project-card-icon">
+                                <FolderGit2 size={23} />
+                              </div>
+                              <h2>{p.name}</h2>
+                              <p>{p.repository}</p>
+                              <span>
+                                <GitBranch size={13} />
+                                {p.branch}
+                              </span>
+                              <footer>
+                                <span>
+                                  {p.path
+                                    ? "Local folder linked"
+                                    : "Browse issues · local folder optional"}
+                                </span>
+                                <ArrowUpRight size={17} />
+                              </footer>
+                            </button>
+                          ))}
+                      </div>
+                    </>
+                  )}
+                </>
               )}
               {page === "Issues" && (
                 <IssuesPage
+                  key={projectId}
                   issues={issues}
                   queue={queue}
                   openIssue={setSelected}
@@ -593,7 +672,9 @@ export default function App() {
                         <ArrowRight size={14} />
                       </AiButton>
                     ) : (
-                      <AiButton onClick={addProject}>Add a project</AiButton>
+                      <AiButton onClick={addProject}>
+                        Browse repositories
+                      </AiButton>
                     )}
                   </section>
                   <section className="glass settings-section">
@@ -850,13 +931,13 @@ function HomePage({
               </div>
               <h2>A home for your next idea.</h2>
               <p>
-                Connect GitHub, select a local worktree,
+                Connect GitHub to load your repositories,
                 <br />
                 and turn your issues into a clear plan.
               </p>
               <AiButton variant="primary" onClick={addProject}>
                 <Plus size={15} />
-                Create your first project
+                Browse GitHub repositories
               </AiButton>
             </div>
           )}
@@ -1066,15 +1147,17 @@ function IssuesPage({
   hasProject: boolean;
   addProject: () => void;
 }) {
-  const [view, setView] = useState<"Board" | "List">("Board"),
+  const [view, setView] = useState<"Board" | "List">("List"),
     [filter, setFilter] = useState("All"),
     [search, setSearch] = useState(""),
     [provider, setProvider] = useState("all"),
-    [sort, setSort] = useState("number");
+    [sort, setSort] = useState("number"),
+    [remoteState, setRemoteState] = useState("all");
   const item = (i: Issue) => queue.find((q) => q.issueNumber === i.number);
   const visible = useMemo(
     () =>
       issues
+        .filter((i) => remoteState === "all" || i.state === remoteState)
         .filter((i) =>
           `${i.number} ${i.title} ${i.labels.join(" ")} ${i.assignees.join(" ")} ${i.milestone ?? ""}`
             .toLowerCase()
@@ -1098,15 +1181,15 @@ function IssuesPage({
               ? b.updatedAt.localeCompare(a.updatedAt)
               : a.number - b.number,
         ),
-    [issues, queue, search, filter, provider, sort],
+    [issues, queue, search, filter, provider, sort, remoteState],
   );
   if (!hasProject)
     return (
       <Empty
-        title="A project brings it all together"
+        title="Choose a GitHub repository"
         action={
           <AiButton variant="primary" onClick={addProject}>
-            Add a project
+            Browse repositories
           </AiButton>
         }
       >
@@ -1156,6 +1239,15 @@ function IssuesPage({
           />
         </label>
         <select
+          aria-label="GitHub issue state"
+          value={remoteState}
+          onChange={(e) => setRemoteState(e.target.value)}
+        >
+          <option value="all">GitHub: open and closed</option>
+          <option value="OPEN">GitHub: open</option>
+          <option value="CLOSED">GitHub: closed</option>
+        </select>
+        <select
           aria-label="Filter provider"
           value={provider}
           onChange={(e) => setProvider(e.target.value)}
@@ -1180,8 +1272,8 @@ function IssuesPage({
       </div>
       {!issues.length ? (
         <Empty title="Your issues, right here">
-          Connect GitHub in Accounts, then sync this project to load real
-          issues.
+          Issues are loaded from the selected GitHub repository. Use Sync issues
+          to refresh its open and closed issues.
         </Empty>
       ) : view === "Board" ? (
         <div className="board">
@@ -1871,12 +1963,13 @@ function ProjectForm({
   return (
     <div className="form-content">
       <p className="muted">
-        Give AiFlow a repository and an existing local worktree. It will inspect
-        Git before saving.
+        Repository and issues come from GitHub. Link an existing local worktree
+        only when you want to run tasks. AiFlow inspects Git before saving.
       </p>
       <label className="field">
         Project name
         <input
+          readOnly={!!project}
           value={form.name}
           onChange={(e) => setForm({ ...form, name: e.target.value })}
           placeholder="My project"
@@ -1886,6 +1979,7 @@ function ProjectForm({
         GitHub repository
         <div className="field-inline">
           <input
+            readOnly={!!project}
             list="github-repos"
             value={form.repository}
             onChange={(e) => setForm({ ...form, repository: e.target.value })}
@@ -2178,7 +2272,14 @@ function IssueDetail({
                 {!item ? (
                   <AiButton
                     variant="primary"
-                    disabled={loading || issue.state === "CLOSED"}
+                    title={
+                      !project?.path
+                        ? "Link a local folder in repository settings to run tasks"
+                        : undefined
+                    }
+                    disabled={
+                      loading || issue.state === "CLOSED" || !project?.path
+                    }
                     onClick={() =>
                       void command("enqueue", {
                         projectId: project?.id,

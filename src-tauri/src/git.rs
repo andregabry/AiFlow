@@ -61,6 +61,9 @@ pub async fn snapshot(path: &str) -> Result<GitSnapshot> {
     })
 }
 pub async fn validate(p: &Project) -> Result<GitSnapshot> {
+    if p.path.trim().is_empty() {
+        return Err("Link a local Git worktree before running tasks".into());
+    }
     let s = snapshot(&p.path).await?;
     if s.branch != p.branch {
         return Err(format!(

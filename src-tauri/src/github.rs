@@ -281,13 +281,18 @@ impl GitHubService {
         for page in 1..=100 {
             let v = self
                 .get(&format!(
-                    "/user/repos?per_page=100&sort=updated&page={page}"
+                    "/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member&page={page}"
                 ))
                 .await?;
             let rows = v.as_array().ok_or("Invalid GitHub repository response")?;
-            list.extend(rows.iter().map(|r|json!({"fullName":r["full_name"],"private":r["private"],"defaultBranch":r["default_branch"]})));
+            list.extend(rows.iter().map(|r|json!({"id":r["id"],"fullName":r["full_name"],"private":r["private"],"defaultBranch":r["default_branch"]})));
             if rows.len() < 100 {
                 break;
+            }
+            if page == 100 {
+                return Err(
+                    "GitHub repository pagination limit reached; previous catalog preserved".into(),
+                );
             }
         }
         Ok(list.into())
@@ -385,18 +390,14 @@ impl GitHubService {
             if count < 100 {
                 break;
             }
+            if page == 100 {
+                return Err(
+                    "GitHub issue pagination limit reached; previous issues preserved".into(),
+                );
+            }
         }
-        // Upsert the remote cache only. Operational task state and attempt history are independent.
-        for i in &issues {
-            store.sql(
-                "INSERT OR REPLACE INTO issues_cache VALUES(?,?,?)",
-                rusqlite::params![
-                    project.id,
-                    i.number as i64,
-                    serde_json::to_string(i).unwrap()
-                ],
-            )?;
-        }
+        // Replace only the remote view; operational queue and execution history remain independent.
+        store.replace_remote_issues(&project.id, &issues)?;
         Ok(issues.len())
     }
     pub async fn comments(&self, p: &Project, number: u64) -> Result<Vec<String>> {

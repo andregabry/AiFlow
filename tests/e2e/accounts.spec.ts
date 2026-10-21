@@ -74,6 +74,8 @@ async function accountFixture(
             return ++counter;
           }
           if (command === "plugin:event|unlisten") return;
+          if (command === "sync_repositories" || command === "sync_issues")
+            return 0;
           if (command === "snapshot")
             return {
               projects: [],

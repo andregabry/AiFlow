@@ -20,3 +20,5 @@ CREATE TABLE IF NOT EXISTS audit_events(id INTEGER PRIMARY KEY AUTOINCREMENT, ti
 CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS github_cache(url TEXT PRIMARY KEY, etag TEXT, data TEXT NOT NULL);
 INSERT OR IGNORE INTO schema_migrations VALUES(1, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+
+CREATE TABLE IF NOT EXISTS github_repository_catalog(account TEXT NOT NULL, repository_id TEXT NOT NULL, project_id TEXT NOT NULL, repository TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(account,repository_id));

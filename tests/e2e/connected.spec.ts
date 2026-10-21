@@ -146,6 +146,8 @@ test("connected views, issue states and incremental IPC output", async ({
         },
         unregisterCallback: (id: number) => callbacks.delete(id),
         invoke: async (command: string, args: Record<string, unknown>) => {
+          if (command === "sync_repositories" || command === "sync_issues")
+            return 0;
           if (command === "snapshot") return snapshot;
           if (command === "execution_event_window") return [event];
           if (command === "plugin:event|listen") {
@@ -178,6 +180,7 @@ test("connected views, issue states and incremental IPC output", async ({
   await nav.getByRole("button", { name: /^Issues/ }).click();
   await expect(page.locator(".page-top h1")).toHaveText("Issues");
   await expect(page.locator(".page")).toHaveCSS("opacity", "1");
+  await page.getByRole("button", { name: "Board", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "PostgreSQL-only runtime", exact: true }),
   ).toBeVisible();

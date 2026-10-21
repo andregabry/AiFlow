@@ -57,18 +57,22 @@ test("offline onboarding, navigation, command palette and themes", async ({
   await expect(page.getByRole("dialog")).not.toBeVisible();
   expect(errors).toEqual([]);
 });
-test("new project sheet traps focus and closes on Escape", async ({ page }) => {
+test("repository browsing requires GitHub instead of creating a local project", async ({
+  page,
+}) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Create your first project" }).click();
-  await expect(page.getByRole("dialog", { name: "New project" })).toBeVisible();
-  await page.getByLabel("Project name").fill("AiFlow");
+  await page
+    .getByRole("button", { name: "Browse GitHub repositories" })
+    .click();
+  await expect(page.locator(".page-top h1")).toHaveText("Projects");
   await expect(
-    page.getByRole("button", { name: "Save project" }),
-  ).toBeDisabled();
-  await page.screenshot({
-    path: "test-results/project-sheet.png",
-    fullPage: true,
-  });
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog")).not.toBeVisible();
+    page.getByRole("heading", { name: "Your GitHub repositories" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "New project", exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Connect GitHub", exact: true })
+    .click();
+  await expect(page.locator(".page-top h1")).toHaveText("Accounts");
 });
